@@ -384,6 +384,17 @@ func setProviderDefaults() {
 		viper.SetDefault("agents.title.model", models.VertexAIGemini25FlashLite)
 		return
 	}
+
+	// No provider matched: seed the agent registry with the flagship defaults so
+	// HeliumCode always boots (instead of failing with "agent coder not found").
+	// Until a key is configured, requests surface a clear authentication error.
+	if viper.GetString("agents.coder.model") == "" {
+		viper.SetDefault("providers.anthropic.apiKey", os.Getenv("ANTHROPIC_API_KEY"))
+		viper.SetDefault("agents.coder.model", models.ClaudeSonnet55)
+		viper.SetDefault("agents.summarizer.model", models.ClaudeSonnet55)
+		viper.SetDefault("agents.task.model", models.ClaudeSonnet55)
+		viper.SetDefault("agents.title.model", models.ClaudeHaiku45)
+	}
 }
 
 // hasAWSCredentials checks if AWS credentials are available in the environment.
@@ -618,13 +629,26 @@ func Validate() error {
 		}
 	}
 
-	// Validate providers
+	// Validate providers. Providers without an API key are marked as disabled so
+	// they do not show up as usable, but when *no* provider has a key we keep the
+	// fallback provider enabled so HeliumCode can still start and guide the user
+	// through setup instead of failing during boot.
+	hasUsableProvider := false
+	for _, providerCfg := range cfg.Providers {
+		if providerCfg.APIKey != "" && !providerCfg.Disabled {
+			hasUsableProvider = true
+			break
+		}
+	}
 	for provider, providerCfg := range cfg.Providers {
 		if providerCfg.APIKey == "" && !providerCfg.Disabled {
-			fmt.Printf("provider has no API key, marking as disabled %s", provider)
-			logging.Warn("provider has no API key, marking as disabled", "provider", provider)
-			providerCfg.Disabled = true
-			cfg.Providers[provider] = providerCfg
+			if hasUsableProvider {
+				logging.Warn("provider has no API key, marking as disabled", "provider", provider)
+				providerCfg.Disabled = true
+				cfg.Providers[provider] = providerCfg
+			} else {
+				logging.Warn("provider has no API key; leaving it enabled so HeliumCode can start and guide setup", "provider", provider)
+			}
 		}
 	}
 
@@ -750,7 +774,16 @@ func setDefaultModelForAgent(agent AgentName) bool {
 		return true
 	}
 
-	return false
+	// Nothing is configured yet: fall back to Claude so the agent always has a
+	// valid model and HeliumCode can boot into the TUI. The first request will
+	// report an authentication error until the user configures a provider key.
+	if _, ok := cfg.Providers[models.ProviderAnthropic]; !ok {
+		cfg.Providers[models.ProviderAnthropic] = Provider{
+			APIKey: getProviderAPIKey(models.ProviderAnthropic),
+		}
+	}
+	cfg.Agents[agent] = pick(models.ClaudeSonnet55, models.ClaudeHaiku45)
+	return true
 }
 
 func updateCfgFile(updateCfg func(config *Config)) error {

@@ -104,6 +104,22 @@ func bannerHeader(width int) string {
 	)
 }
 
+// providerConfigured reports whether at least one provider has a usable API key.
+// When nothing is configured the welcome screen nudges the user to set one up
+// instead of letting the first request fail with an opaque auth error.
+func providerConfigured() bool {
+	cfg := config.Get()
+	if cfg == nil {
+		return true // don't nag when config isn't loaded (tests, early startup)
+	}
+	for _, provider := range cfg.Providers {
+		if provider.APIKey != "" && !provider.Disabled {
+			return true
+		}
+	}
+	return false
+}
+
 // welcomeHints renders the shortcut hints shown below the banner on the
 // initial screen.
 func welcomeHints(width int) string {
@@ -133,10 +149,15 @@ func welcomeHints(width int) string {
 		key("tab"), hint(" autocomplete"),
 	)
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		intro,
-		"",
-		shortcuts,
-	)
+	lines := []string{intro}
+	if !providerConfigured() {
+		lines = append(lines, "",
+			base.Foreground(t.Warning()).Render(
+				"No provider configured — add an API key to a provider to start chatting.",
+			),
+		)
+	}
+	lines = append(lines, "", shortcuts)
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

@@ -2,9 +2,10 @@
 #
 # HeliumCode installer
 #
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/refs/heads/main/install | bash
+#   curl -fsSL https://raw.githubusercontent.com/heliumcode-labs/helium/refs/heads/main/install | bash
 #
-# Pin a version with:  VERSION=0.1.0 curl ... | bash
+# Pin a version:
+#   VERSION=0.1.0 curl -fsSL .../install | bash
 #
 set -euo pipefail
 
@@ -18,8 +19,13 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
     TTY_OUT=1
 fi
 
+TRUECOLOR=0
+if [ "${COLORTERM:-}" = "truecolor" ] || [ "${COLORTERM:-}" = "24bit" ]; then
+    TRUECOLOR=1
+fi
+
 if [ "$TTY_OUT" = "1" ]; then
-    if [ "${COLORTERM:-}" = "truecolor" ] || [ "${COLORTERM:-}" = "24bit" ]; then
+    if [ "$TRUECOLOR" = "1" ]; then
         C_MINT=$'\033[38;2;79;227;193m'
         C_VIOLET=$'\033[38;2;139;123;247m'
         C_CORAL=$'\033[38;2;255;122;182m'
@@ -34,22 +40,82 @@ if [ "$TTY_OUT" = "1" ]; then
         C_RED=$'\033[38;5;203m'
         C_YELLOW=$'\033[38;5;214m'
     fi
-    C_BOLD=$'\033[1m'
     C_DIM=$'\033[2m'
+    C_BOLD=$'\033[1m'
     C_RESET=$'\033[0m'
 else
     C_MINT=""; C_VIOLET=""; C_CORAL=""; C_GREEN=""; C_RED=""; C_YELLOW=""
-    C_BOLD=""; C_DIM=""; C_RESET=""
+    C_DIM=""; C_BOLD=""; C_RESET=""
 fi
 
 MARK_OK="${C_GREEN}${C_BOLD}✔${C_RESET}"
-MARK_WARN="${C_YELLOW}${C_BOLD}!${C_RESET}"
 MARK_ERR="${C_RED}${C_BOLD}✖${C_RESET}"
-MARK_INFO="${C_MINT}${C_BOLD}›${C_RESET}"
+MARK_STEP="${C_MINT}${C_BOLD}›${C_RESET}"
 
 sleep_tiny() { sleep "$1" 2>/dev/null || sleep 1; }
 
-# ------------------------------------------------------------------ helpers
+# ------------------------------------------------------------------- drawing
+term_width() {
+    local w="${COLUMNS:-}"
+    if [ -z "$w" ] && [ "$TTY_OUT" = "1" ] && command -v tput >/dev/null 2>&1; then
+        w=$(tput cols 2>/dev/null || true)
+    fi
+    case "$w" in ''|*[!0-9]*) w=80 ;; esac
+    [ "$w" -lt 44 ] && w=44
+    printf '%s' "$w"
+}
+
+# grad_color <percent>: mint -> violet, flat colour when truecolor is absent.
+grad_color() {
+    local p="${1:-0}"
+    [ "$p" -lt 0 ] && p=0
+    [ "$p" -gt 100 ] && p=100
+    if [ "$TRUECOLOR" = "1" ]; then
+        local r=$(( 79 + (139 - 79) * p / 100 ))
+        local g=$(( 227 + (123 - 227) * p / 100 ))
+        local b=$(( 193 + (247 - 193) * p / 100 ))
+        printf '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
+    else
+        printf '%s' "$C_MINT"
+    fi
+}
+
+repeat_char() {
+    local n="$1" ch="$2" out="" i
+    for (( i = 0; i < n; i++ )); do out+="$ch"; done
+    printf '%s' "$out"
+}
+
+human_size() {
+    awk -v b="${1:-0}" 'BEGIN {
+        if (b >= 1073741824)   printf "%.1f GiB", b / 1073741824
+        else if (b >= 1048576) printf "%.1f MiB", b / 1048576
+        else if (b >= 1024)    printf "%.0f KiB", b / 1024
+        else                   printf "%d B", b
+    }'
+}
+
+human_time() {
+    awk -v s="${1:-0}" 'BEGIN {
+        s = int(s + 0.5)
+        if (s < 60) printf "%ds", s
+        else printf "%dm %02ds", int(s / 60), s % 60
+    }'
+}
+
+now() { date +%s.%N 2>/dev/null || date +%s; }
+
+# ------------------------------------------------------------------ messages
+die() {
+    stop_spinner >/dev/null 2>&1 || true
+    printf '  %s %s\n' "$MARK_ERR" "$1" >&2
+    exit 1
+}
+
+ok()   { printf '  %s %s\n' "$MARK_OK" "$1"; }
+warn() { printf '  %s %s\n' "${C_YELLOW}${C_BOLD}!${C_RESET}" "$1"; }
+
+# ------------------------------------------------------------------- spinner
 SPINNER_PID=""
 TMP_DIR=""
 
@@ -59,26 +125,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-die() {
-    printf '  %s %s\n' "$MARK_ERR" "$1" >&2
-    exit 1
-}
-
-ok()   { printf '  %s %s\n' "$MARK_OK" "$1"; }
-info() { printf '  %s %s\n' "$MARK_INFO" "$1"; }
-warn() { printf '  %s %s\n' "$MARK_WARN" "$1"; }
-
-section() {
-    printf '\n%s%s%s\n' "$C_BOLD" "$1" "$C_RESET"
-}
-
-# Staggered line printing: each line fades in a moment after the previous one.
-anim_line() {
-    printf '%s\n' "$1"
-    [ "$TTY_OUT" = "1" ] && sleep_tiny "${2:-0.12}"
-    return 0
-}
-
 start_spinner() {
     [ "$TTY_OUT" = "1" ] || return 0
     local msg="$1"
@@ -86,10 +132,9 @@ start_spinner() {
     (
         i=0
         while :; do
-            frame=${frames[$(( i % 10 ))]}
-            printf '\r  %s%s%s %s\033[K' "$C_MINT" "$frame" "$C_RESET" "$msg"
+            printf '\r  %s%s%s %s\033[K' "$C_MINT" "${frames[$(( i % 10 ))]}" "$C_RESET" "$msg"
             i=$(( i + 1 ))
-            sleep_tiny 0.09
+            sleep_tiny 0.08
         done
     ) &
     SPINNER_PID=$!
@@ -105,70 +150,117 @@ stop_spinner() {
     return 0
 }
 
-human_size() {
-    awk -v b="${1:-0}" 'BEGIN {
-        if (b >= 1073741824)      printf "%.1f GiB", b / 1073741824
-        else if (b >= 1048576)    printf "%.1f MiB", b / 1048576
-        else if (b >= 1024)       printf "%.1f KiB", b / 1024
-        else                      printf "%d B", b
-    }'
+# ------------------------------------------------------------------ download
+# draw_bar <prefix> <cur> <total> <bar_width>: single line, no trailing newline.
+draw_bar() {
+    local prefix="$1" cur="$2" total="$3" width="$4"
+    local pct=0
+    if [ "$total" -gt 0 ]; then
+        pct=$(( cur * 100 / total ))
+        [ "$pct" -gt 100 ] && pct=100
+    fi
+
+    local eighths=$(( pct * width * 8 / 100 ))
+    local full=$(( eighths / 8 ))
+    local rem=$(( eighths % 8 ))
+    local -a partial=(▏ ▎ ▍ ▌ ▋ ▊ ▉)
+    local d=$(( width > 1 ? width - 1 : 1 ))
+
+    local bar="" i
+    for (( i = 0; i < full; i++ )); do
+        bar+="$(grad_color $(( i * 100 / d )))█"
+    done
+    if [ "$rem" -gt 0 ]; then
+        bar+="$(grad_color $(( full * 100 / d )))${partial[$(( rem - 1 ))]}"
+    fi
+
+    local used=$(( full + (rem > 0 ? 1 : 0) ))
+    local pad=$(( width - used ))
+    local tail=""
+    [ "$pad" -gt 0 ] && tail="$(repeat_char "$pad" ░)"
+
+    printf '\r  %s%s%s [%s%s%s%s%s] %s%3d%%%s  %s\033[K' \
+        "$C_DIM" "$prefix" "$C_RESET" \
+        "$C_DIM" "$bar" "$tail" "$C_RESET" "" \
+        "$C_BOLD" "$pct" "$C_RESET" "$(human_size "$cur")"
 }
 
-# Animated download: curl runs in the background while a progress bar is
-# painted from the growing file size. Falls back to plain output when the
-# script is not attached to a terminal.
-download_with_progress() {
+# download <url> <out> <label>
+download() {
     local url="$1" out="$2" label="$3"
-    local total=0 cur=0 pct=0 rc=0
+    local total=0
 
     total=$(curl -sIL --max-time 20 "$url" 2>/dev/null | tr -d '\r' \
         | awk 'tolower($1) == "content-length:" { len = $2 } END { print len + 0 }') || total=0
     total=${total:-0}
 
     if [ "$TTY_OUT" != "1" ]; then
-        info "$label"
-        curl -fL --retry 3 --connect-timeout 15 -o "$out" "$url" >/dev/null 2>&1 || return 1
+        printf '  %s %s\n' "$MARK_STEP" "Downloading ${label}"
+        curl -fL --retry 3 --connect-timeout 20 -o "$out" "$url" >/dev/null 2>&1 \
+            || return 1
         return 0
     fi
 
-    start_spinner "$label"
-    curl -fL --retry 3 --connect-timeout 15 -o "$out" "$url" 2>/dev/null &
+    local width=$(( WIDTH - ${#label} - 34 ))
+    [ "$width" -gt 28 ] && width=28
+    [ "$width" -lt 12 ] && width=12
+
+    local start cur=0 elapsed rc=0 stats
+    local prefix="Downloading ${label}"
+    start=$(now)
+
+    curl -fL --retry 3 --connect-timeout 20 -o "$out" "$url" 2>/dev/null &
     local curl_pid=$!
 
     while kill -0 "$curl_pid" 2>/dev/null; do
         if [ -f "$out" ]; then
             cur=$(wc -c < "$out" 2>/dev/null | tr -d ' ' || echo 0)
             cur=${cur:-0}
-            if [ "$total" -gt 0 ]; then
-                pct=$(( cur * 100 / total ))
-                [ "$pct" -gt 100 ] && pct=100
-                local width=32 filled i bar="" pad=""
-                filled=$(( pct * width / 100 ))
-                for (( i = 0; i < filled; i++ )); do bar="${bar}█"; done
-                for (( i = filled; i < width; i++ )); do pad="${pad}─"; done
-                printf '\r  %s[%s%s%s%s]%s %3d%%  %s%s\033[K' \
-                    "$C_MINT" "$C_BOLD" "$bar" "$C_DIM" "$pad" "$C_RESET" \
-                    "$pct" "$(human_size "$cur")" "$C_DIM"
-            else
-                printf '\r  %s%s%s  %s\033[K' "$C_MINT" "$C_BOLD" "$label" \
-                    "$(human_size "$cur")$C_RESET"
-            fi
+            elapsed=$(awk -v a="$start" -v b="$(now)" 'BEGIN { print b - a }')
+            draw_bar "$prefix" "$cur" "$total" "$width"
+            stats=$(awk -v c="$cur" -v t="$total" -v e="$elapsed" 'BEGIN {
+                if (e < 0.3 || c <= 0) { exit }
+                s = c / e
+                if (s >= 1048576) sp = sprintf("%.1f MiB/s", s / 1048576)
+                else if (s >= 1024) sp = sprintf("%.0f KiB/s", s / 1024)
+                else sp = sprintf("%.0f B/s", s)
+                out = sp
+                if (t > 0 && s > 0) {
+                    secs = int((t - c) / s + 0.5)
+                    if (secs < 60) et = sprintf("%ds", secs)
+                    else et = sprintf("%dm %02ds", int(secs / 60), secs % 60)
+                    out = out "  ·  ETA " et
+                }
+                printf "%s", out
+            }')
+            [ -n "$stats" ] && printf '  %s%s%s' "$C_DIM" "$stats" "$C_RESET"
         fi
         sleep_tiny 0.1
     done
 
     wait "$curl_pid" || rc=$?
-    stop_spinner
-    [ "$rc" -eq 0 ] || return 1
-
-    if [ "$total" -gt 0 ] && [ -f "$out" ]; then
-        printf '  %s[%s%s%s%s]%s %3d%%  %s\n' \
-            "$C_MINT" "$C_BOLD" "$(printf '█%.0s' $(seq 1 32))" "$C_DIM" "" "$C_RESET" \
-            100 "$(human_size "$(wc -c < "$out" | tr -d ' ')")"
+    if [ "$rc" -ne 0 ]; then
+        printf '\r\033[K'
+        return 1
     fi
+
+    cur=$(wc -c < "$out" 2>/dev/null | tr -d ' ' || echo 0)
+    elapsed=$(awk -v a="$start" -v b="$(now)" 'BEGIN { print b - a }')
+    local speed=""
+    speed=$(awk -v c="$cur" -v e="$elapsed" 'BEGIN {
+        if (e <= 0) { exit }
+        s = c / e
+        if (s >= 1048576) printf "%.1f MiB/s", s / 1048576
+        else if (s >= 1024) printf "%.0f KiB/s", s / 1024
+        else printf "%.0f B/s", s
+    }')
+
+    printf '\r\033[K  %s %s\n' "$MARK_OK" \
+        "Downloaded ${C_BOLD}$(human_size "$cur")${C_RESET} in $(human_time "$elapsed")${speed:+ ${C_DIM}· ${speed}${C_RESET}}"
     return 0
 }
 
+# --------------------------------------------------------------------- usage
 usage() {
     cat <<EOF
 ${C_BOLD}HeliumCode installer${C_RESET}
@@ -179,27 +271,33 @@ Options:
   -v, --version <x.y.z>  Install a specific version (or set VERSION=x.y.z)
   -h, --help             Show this help
 
-Install dir: ${INSTALL_DIR}
+Installs to: ${INSTALL_DIR}
 EOF
 }
 
-# -------------------------------------------------------------------- args
+# ---------------------------------------------------------------------- args
 requested_version="${VERSION:-}"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -v|--version) requested_version="${2:-}"; shift 2 ;;
-        -h|--help)    usage; exit 0 ;;
-        *)            shift ;;
+while [ "$#" -gt 0 ]; do
+    case "${1:-}" in
+        -v|--version)
+            [ "$#" -ge 2 ] || die "--version needs a value, e.g. --version 0.1.0"
+            requested_version="$2"
+            shift 2
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *)         shift ;;
     esac
 done
 
-# ------------------------------------------------------------ platform check
+# ---------------------------------------------------------- platform detect
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 [ "$os" = "darwin" ] && os="mac"
 
 arch=$(uname -m)
-[ "$arch" = "aarch64" ] && arch="arm64"
-[ "$arch" = "x64" ] && arch="x86_64"
+case "$arch" in
+    aarch64) arch="arm64" ;;
+    x64)     arch="x86_64" ;;
+esac
 
 filename="$APP-$os-$arch.tar.gz"
 
@@ -212,27 +310,32 @@ case "$filename" in
         die "Unsupported OS/architecture: $os/$arch (linux and mac are supported)" ;;
 esac
 
-# ------------------------------------------------------------------- banner
-INNER=38
-if [ "$TTY_OUT" = "1" ]; then
-    TL="╭"; TR="╮"; BL="╰"; BR="╯"; VB="│"; HS="─"
-else
-    TL="+"; TR="+"; BL="+"; BR="+"; VB="|"; HS="-"
-fi
-HSEP=$(printf '%*s' "$INNER" ''); HSEP=${HSEP// /"$HS"}
+# ----------------------------------------------------------------- dimensions
+WIDTH=$(term_width)
+INNER=48
+[ "$INNER" -gt $(( WIDTH - 8 )) ] && INNER=$(( WIDTH - 8 ))
+[ "$INNER" -lt 38 ] && INNER=38
+HSEP=$(repeat_char "$INNER" ─)
 
+# boxline <plain> <styled>: one box row, borders stay aligned.
+boxline() {
+    local plain="$1" styled="$2"
+    local pad=$(( INNER - 2 - ${#plain} ))
+    [ "$pad" -lt 0 ] && pad=0
+    printf '  %s│%s %s%s %s│%s\n' "$C_MINT" "$C_RESET" "$styled" "$(repeat_char "$pad" ' ')" "$C_MINT" "$C_RESET"
+}
+
+# -------------------------------------------------------------------- banner
 printf '\n'
-anim_line "  ${C_MINT}${TL}${HSEP}${TR}${C_RESET}"
-
-plain1=$(printf '%-*s' "$INNER" "  He  HeliumCode")
-plain1=${plain1/He/"${C_BOLD}${C_MINT}He${C_RESET}${C_BOLD}"}
-plain1=${plain1/HeliumCode/"${C_BOLD}Helium${C_RESET}${C_CORAL}${C_BOLD}Code${C_RESET}${C_DIM}"}
-anim_line "  ${C_MINT}${VB}${C_RESET}${plain1}${C_RESET}${C_MINT}${VB}${C_RESET}"
-
-plain2=$(printf '%-*s' "$INNER" "      the noble gas that lifts your code")
-anim_line "  ${C_MINT}${VB}${C_RESET}${C_DIM}${plain2}${C_RESET}${C_MINT}${VB}${C_RESET}"
-
-anim_line "  ${C_MINT}${BL}${HSEP}${BR}${C_RESET}"
+if [ "$TTY_OUT" = "1" ] && [ "$WIDTH" -ge 56 ]; then
+    printf '  %s╭%s╮%s\n' "$C_MINT" "$HSEP" "$C_RESET"
+    boxline "  He  HeliumCode" "  ${C_BOLD}${C_MINT}He${C_RESET}${C_BOLD}  Helium${C_RESET}${C_CORAL}${C_BOLD}Code${C_RESET}"
+    boxline "      the noble gas that lifts your terminal" "      ${C_DIM}the noble gas that lifts your terminal${C_RESET}"
+    printf '  %s╰%s╯%s\n' "$C_MINT" "$HSEP" "$C_RESET"
+else
+    printf '  %sHe%s  %sHelium%s%sCode%s %s— the noble gas that lifts your terminal%s\n' \
+        "${C_BOLD}${C_MINT}" "$C_RESET" "$C_BOLD" "$C_RESET" "${C_CORAL}${C_BOLD}" "$C_RESET" "$C_DIM" "$C_RESET"
+fi
 printf '\n'
 
 # --------------------------------------------------------------- resolve tag
@@ -242,21 +345,22 @@ if [ -z "$requested_version" ]; then
         "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
         | awk -F'"' '/"tag_name": "/ { gsub(/^v/, "", $4); print $4; exit }') || specific_version=""
     stop_spinner
-    [ -n "$specific_version" ] || die "Could not reach the release feed for ${REPO}. Is the version published yet?"
+    [ -n "$specific_version" ] || die "Could not find a published release for ${REPO}."
     url="https://github.com/${REPO}/releases/latest/download/${filename}"
 else
     specific_version=$(printf '%s' "$requested_version" | sed 's/^v//')
     url="https://github.com/${REPO}/releases/download/v${specific_version}/${filename}"
 fi
 
-section "Install  ${C_DIM}v${specific_version} · ${os}/${arch}${C_RESET}"
+ok "Latest release ${C_BOLD}v${specific_version}${C_RESET} ${C_DIM}· ${os}/${arch}${C_RESET}"
 
 # Already installed?
 mkdir -p "$INSTALL_DIR"
 if [ -x "$INSTALL_DIR/$APP" ]; then
     installed_version=$("$INSTALL_DIR/$APP" -v 2>/dev/null | head -1 | sed 's/^v//' || true)
     if [ -n "$installed_version" ] && [ "$installed_version" = "$specific_version" ]; then
-        ok "HeliumCode ${C_BOLD}v${specific_version}${C_RESET} is already installed at ${C_DIM}$INSTALL_DIR${C_RESET}"
+        ok "HeliumCode ${C_BOLD}v${specific_version}${C_RESET} is already installed ${C_DIM}($INSTALL_DIR)${C_RESET}"
+        printf '\n'
         exit 0
     fi
 fi
@@ -264,18 +368,17 @@ fi
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t helium)
 archive="$TMP_DIR/$filename"
 
-# ------------------------------------------------------------------ download
-start_spinner "Preparing download…"
+# ---------------------------------------------------------------- checksums
+start_spinner "Fetching checksums…"
 curl -fsSL --max-time 20 -o "$TMP_DIR/checksums.txt" \
     "https://github.com/${REPO}/releases/download/v${specific_version}/checksums.txt" \
     2>/dev/null || rm -f "$TMP_DIR/checksums.txt"
 stop_spinner
 
-if ! download_with_progress "$url" "$archive" "Downloading ${APP} v${specific_version}"; then
-    die "Download failed: $url"
-fi
+# ----------------------------------------------------------------- download
+download "$url" "$archive" "${APP} v${specific_version}" || die "Download failed: $url"
 
-# ---------------------------------------------------------------- checksum
+# ----------------------------------------------------------------- checksum
 if [ -f "$TMP_DIR/checksums.txt" ]; then
     if command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; then
         expected=$(awk -v f="$filename" '$2 == f { print $1; exit }' "$TMP_DIR/checksums.txt")
@@ -286,27 +389,27 @@ if [ -f "$TMP_DIR/checksums.txt" ]; then
                 actual=$(shasum -a 256 "$archive" | awk '{ print $1 }')
             fi
             if [ "$actual" = "$expected" ]; then
-                ok "Checksum verified"
+                ok "Checksum verified ${C_DIM}(sha256)${C_RESET}"
             else
                 die "Checksum mismatch — refusing to install (expected $expected, got $actual)"
             fi
         fi
     fi
 else
-    warn "Checksums not available for v${specific_version}; skipping verification"
+    warn "No checksums published for v${specific_version}; skipping verification"
 fi
 
-# ------------------------------------------------------------------ extract
+# ------------------------------------------------------------------- extract
 start_spinner "Unpacking…"
-tar -xzf "$archive" -C "$TMP_DIR" || { stop_spinner; die "Could not extract $filename"; }
+tar -xzf "$archive" -C "$TMP_DIR" 2>/dev/null || { stop_spinner; die "Could not extract $filename"; }
 stop_spinner
 [ -f "$TMP_DIR/$APP" ] || die "Archive did not contain the $APP binary"
 chmod +x "$TMP_DIR/$APP"
 
-start_spinner "Installing to ${INSTALL_DIR}…"
+start_spinner "Installing…"
 mv "$TMP_DIR/$APP" "$INSTALL_DIR/$APP"
 stop_spinner
-ok "Installed ${C_BOLD}${APP}${C_RESET} → ${C_DIM}${INSTALL_DIR}/${APP}${C_RESET}"
+ok "Installed to ${C_DIM}${INSTALL_DIR}/${APP}${C_RESET}"
 
 # --------------------------------------------------------------------- PATH
 XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -315,8 +418,7 @@ current_shell=$(basename "${SHELL:-/bin/bash}")
 case $current_shell in
     fish) config_files="$HOME/.config/fish/config.fish" ;;
     zsh)  config_files="$HOME/.zshrc $HOME/.zshenv $XDG_CONFIG_HOME/zsh/.zshrc $XDG_CONFIG_HOME/zsh/.zshenv" ;;
-    ash)  config_files="$HOME/.ashrc $HOME/.profile /etc/profile" ;;
-    sh)   config_files="$HOME/.ashrc $HOME/.profile /etc/profile" ;;
+    sh|ash|dash) config_files="$HOME/.ashrc $HOME/.profile /etc/profile" ;;
     *)    config_files="$HOME/.bashrc $HOME/.bash_profile $HOME/.profile $XDG_CONFIG_HOME/bash/.bashrc $XDG_CONFIG_HOME/bash/.bash_profile" ;;
 esac
 
@@ -335,6 +437,8 @@ path_line() {
     esac
 }
 
+PATH_FILE=""
+PATH_MANUAL=0
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     if [[ -n $config_file && -w $config_file ]] && ! grep -qF "$INSTALL_DIR" "$config_file"; then
         {
@@ -342,10 +446,10 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
             path_line
             printf '\n'
         } >> "$config_file"
-        ok "Added to ${C_BOLD}PATH${C_RESET} in ${C_DIM}$config_file${C_RESET}"
+        PATH_FILE="$config_file"
+        ok "Updated ${C_BOLD}PATH${C_RESET} in ${C_DIM}$config_file${C_RESET}"
     else
-        warn "Add this line to your shell profile:"
-        printf '     %s%s%s\n' "$C_MINT" "$(path_line)" "$C_RESET"
+        PATH_MANUAL=1
     fi
 else
     ok "Already on ${C_BOLD}PATH${C_RESET}"
@@ -353,13 +457,31 @@ fi
 
 if [ -n "${GITHUB_ACTIONS:-}" ] && [ "${GITHUB_ACTIONS}" = "true" ]; then
     echo "$INSTALL_DIR" >> "$GITHUB_PATH"
-    ok "Added ${INSTALL_DIR} to \$GITHUB_PATH"
 fi
 
 # --------------------------------------------------------------------- done
-printf '\n%s%s%s\n' "$C_BOLD" "  Ready." "$C_RESET"
-printf '   %s%s%s%s --help%s   show what it can do\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
-printf '   %s%s%s%s%s          start the assistant\n\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    printf '   %sStart a new shell (or run: %s) to pick up helium.%s\n\n' "$C_DIM" "$(path_line)" "$C_RESET"
+printf '\n'
+if [ "$WIDTH" -ge 50 ]; then
+    printf '  %s╭%s╮%s\n' "$C_MINT" "$HSEP" "$C_RESET"
+    boxline "  HeliumCode v${specific_version} is ready" \
+        "  ${C_MINT}${C_BOLD}HeliumCode${C_RESET} ${C_DIM}v${specific_version}${C_RESET} ${C_BOLD}is ready${C_RESET}"
+    boxline "" ""
+    boxline "  helium          start the assistant" \
+        "  ${C_MINT}${C_BOLD}helium${C_RESET}${C_DIM}          start the assistant${C_RESET}"
+    boxline "  helium --help   show what it can do" \
+        "  ${C_MINT}${C_BOLD}helium --help${C_RESET}${C_DIM}   show what it can do${C_RESET}"
+    printf '  %s╰%s╯%s\n' "$C_MINT" "$HSEP" "$C_RESET"
+else
+    printf '  %s%sHeliumCode v%s is ready%s\n' "$C_MINT" "$C_BOLD" "$specific_version" "$C_RESET"
+    printf '    %shelium%s          %sstart the assistant%s\n' "$C_MINT$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '    %shelium --help%s   %sshow what it can do%s\n' "$C_MINT$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
 fi
+
+printf '\n'
+if [ "$PATH_MANUAL" = "1" ]; then
+    printf '  %sAdd HeliumCode to your PATH:%s\n' "$C_DIM" "$C_RESET"
+    printf '    %s%s%s\n' "$C_MINT" "$(path_line)" "$C_RESET"
+elif [ -n "$PATH_FILE" ]; then
+    printf '  %sRestart your shell (or source %s) to use helium.%s\n' "$C_DIM" "$PATH_FILE" "$C_RESET"
+fi
+printf '\n'

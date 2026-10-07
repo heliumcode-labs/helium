@@ -249,7 +249,7 @@ else
     url="https://github.com/${REPO}/releases/download/v${specific_version}/${filename}"
 fi
 
-section "${C_BOLD}Install${C_RESET}  ${C_DIM}v${specific_version} · ${os}/${arch}${C_RESET}"
+section "Install  ${C_DIM}v${specific_version} · ${os}/${arch}${C_RESET}"
 
 # Already installed?
 mkdir -p "$INSTALL_DIR"
@@ -358,8 +358,8 @@ fi
 
 # --------------------------------------------------------------------- done
 printf '\n%s%s%s\n' "$C_BOLD" "  Ready." "$C_RESET"
-printf '   %s%s%s%s helium%s           show what it can do\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
-printf '   %s%s%s%s helium%s           start the assistant\n\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
+printf '   %s%s%s%s --help%s   show what it can do\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
+printf '   %s%s%s%s%s          start the assistant\n\n' "$C_MINT" "$C_BOLD" "$APP" "$C_RESET" "$C_DIM"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     printf '   %sStart a new shell (or run: %s) to pick up helium.%s\n\n' "$C_DIM" "$(path_line)" "$C_RESET"
 fi

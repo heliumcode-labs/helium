@@ -1,0 +1,8 @@
+{
+  "$schema": "./helium-schema.json",
+  "lsp": {
+    "gopls": {
+      "command": "gopls"
+    }
+  }
+}

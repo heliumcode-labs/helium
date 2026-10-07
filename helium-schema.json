@@ -1,0 +1,520 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "agent": {
+      "description": "Agent configuration",
+      "properties": {
+        "maxTokens": {
+          "description": "Maximum tokens for the agent",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "model": {
+          "description": "Model ID for the agent",
+          "enum": [
+            "claude-sonnet-5",
+            "gemini-2.5-flash-lite",
+            "azure.gpt-5.4",
+            "openrouter.anthropic/claude-sonnet-5.5",
+            "copilot.claude-fable-5.1",
+            "copilot.claude-opus-4.7",
+            "copilot.claude-opus-5.5",
+            "gpt-6.1-sol",
+            "azure.gpt-4.1-nano",
+            "openrouter.google/gemini-2.5-pro",
+            "openrouter.openai/gpt-5.6-luna",
+            "claude-sonnet-4.5",
+            "gemini-2.5-pro",
+            "gpt-4.1-mini",
+            "azure.gpt-6-luna",
+            "copilot.claude-sonnet-4.6",
+            "claude-fable-5",
+            "gpt-5.6-luna",
+            "openrouter.anthropic/claude-sonnet-5",
+            "copilot.gpt-6-astra",
+            "copilot.gemini-3.8-flash",
+            "o3",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash",
+            "openai/gpt-oss-20b",
+            "grok-4.7",
+            "copilot.gpt-4o",
+            "copilot.claude-haiku-4.5",
+            "gpt-4.1-nano",
+            "openai/gpt-oss-120b",
+            "llama-3.1-8b-instant",
+            "claude-opus-4.8",
+            "openrouter.openai/gpt-4.1-mini",
+            "openrouter.anthropic/claude-fable-5.1",
+            "openrouter.anthropic/claude-sonnet-4.6",
+            "copilot.grok-4.6",
+            "gemini-3.5-flash-lite",
+            "bedrock.claude-opus-5.5",
+            "gemini-3.1-pro",
+            "gemini-3.8-flash",
+            "openrouter.openai/gpt-5",
+            "copilot.grok-4.7",
+            "gpt-5.6-sol",
+            "llama-3.3-70b-versatile",
+            "azure.gpt-5.5",
+            "vertexai.gemini-3.5-flash",
+            "copilot.gpt-5.5",
+            "claude-opus-5.5",
+            "claude-opus-4.5",
+            "qwen/qwen3.8-27b",
+            "azure.gpt-5",
+            "grok-4.3",
+            "o4-mini",
+            "openrouter.openai/gpt-4.1",
+            "copilot.gpt-5.4-nano",
+            "copilot.claude-opus-4.8",
+            "gpt-6-astra",
+            "gpt-5.4-nano",
+            "vertexai.gemini-3.8-flash",
+            "vertexai.gemini-3.1-pro",
+            "copilot.claude-opus-5",
+            "openrouter.anthropic/claude-opus-5.5",
+            "gpt-5-mini",
+            "azure.gpt-5.4-nano",
+            "copilot.claude-sonnet-5",
+            "copilot.gemini-3.5-flash",
+            "claude-haiku-4.5",
+            "gpt-4o",
+            "qwen/qwen3.6-27b",
+            "azure.gpt-5.6-sol",
+            "azure.gpt-5-mini",
+            "copilot.claude-sonnet-5.5",
+            "copilot.gpt-5.6-sol",
+            "azure.o3",
+            "bedrock.claude-haiku-4.5",
+            "gpt-4o-mini",
+            "gpt-5",
+            "openrouter.anthropic/claude-haiku-4.5",
+            "copilot.gpt-5-mini",
+            "azure.gpt-4.1",
+            "azure.gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.6-terra",
+            "gpt-4.1",
+            "azure.gpt-4o",
+            "azure.gpt-4o-mini",
+            "copilot.o4-mini",
+            "gpt-5.4-mini",
+            "gemini-3.5-flash",
+            "azure.gpt-4.1-mini",
+            "gpt-6-luna",
+            "azure.gpt-5.4-mini",
+            "openrouter.x-ai/grok-4.7",
+            "vertexai.gemini-2.5-flash-lite",
+            "claude-sonnet-5.5",
+            "openrouter.openai/gpt-6.1-sol",
+            "openrouter.openai/gpt-6-luna",
+            "vertexai.gemini-2.5-pro",
+            "copilot.gpt-5.4-mini",
+            "claude-fable-5.1",
+            "openrouter.openai/gpt-5.6-sol",
+            "openrouter.google/gemini-3.1-pro-preview",
+            "copilot.gpt-6-luna",
+            "grok-4.6",
+            "copilot.gpt-5.4",
+            "copilot.gpt-5.6-luna",
+            "copilot.gpt-4.1",
+            "azure.o4-mini",
+            "bedrock.claude-sonnet-5.5",
+            "grok-4.5",
+            "azure.gpt-6.1-sol",
+            "gpt-5.4",
+            "gpt-5-nano",
+            "vertexai.gemini-2.5-flash",
+            "copilot.gpt-6.1-sol",
+            "openrouter.deepseek/deepseek-v3.2",
+            "copilot.claude-fable-5",
+            "claude-opus-5",
+            "gemini-2.5-flash",
+            "openrouter.google/gemini-3.8-flash",
+            "copilot.gpt-5.6-terra",
+            "bedrock.claude-fable-5.1",
+            "bedrock.claude-sonnet-4.6",
+            "claude-sonnet-4.6",
+            "copilot.grok-4.5"
+          ],
+          "type": "string"
+        },
+        "reasoningEffort": {
+          "description": "Reasoning effort for models that support it (OpenAI, Anthropic)",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Configuration schema for the HeliumCode application",
+  "properties": {
+    "agents": {
+      "additionalProperties": {
+        "description": "Agent configuration",
+        "properties": {
+          "maxTokens": {
+            "description": "Maximum tokens for the agent",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "model": {
+            "description": "Model ID for the agent",
+            "enum": [
+              "claude-sonnet-5",
+              "gemini-2.5-flash-lite",
+              "azure.gpt-5.4",
+              "openrouter.anthropic/claude-sonnet-5.5",
+              "copilot.claude-fable-5.1",
+              "copilot.claude-opus-4.7",
+              "copilot.claude-opus-5.5",
+              "gpt-6.1-sol",
+              "azure.gpt-4.1-nano",
+              "openrouter.google/gemini-2.5-pro",
+              "openrouter.openai/gpt-5.6-luna",
+              "claude-sonnet-4.5",
+              "gemini-2.5-pro",
+              "gpt-4.1-mini",
+              "azure.gpt-6-luna",
+              "copilot.claude-sonnet-4.6",
+              "claude-fable-5",
+              "gpt-5.6-luna",
+              "openrouter.anthropic/claude-sonnet-5",
+              "copilot.gpt-6-astra",
+              "copilot.gemini-3.8-flash",
+              "o3",
+              "gemini-3.1-flash-lite",
+              "gemini-3-flash",
+              "openai/gpt-oss-20b",
+              "grok-4.7",
+              "copilot.gpt-4o",
+              "copilot.claude-haiku-4.5",
+              "gpt-4.1-nano",
+              "openai/gpt-oss-120b",
+              "llama-3.1-8b-instant",
+              "claude-opus-4.8",
+              "openrouter.openai/gpt-4.1-mini",
+              "openrouter.anthropic/claude-fable-5.1",
+              "openrouter.anthropic/claude-sonnet-4.6",
+              "copilot.grok-4.6",
+              "gemini-3.5-flash-lite",
+              "bedrock.claude-opus-5.5",
+              "gemini-3.1-pro",
+              "gemini-3.8-flash",
+              "openrouter.openai/gpt-5",
+              "copilot.grok-4.7",
+              "gpt-5.6-sol",
+              "llama-3.3-70b-versatile",
+              "azure.gpt-5.5",
+              "vertexai.gemini-3.5-flash",
+              "copilot.gpt-5.5",
+              "claude-opus-5.5",
+              "claude-opus-4.5",
+              "qwen/qwen3.8-27b",
+              "azure.gpt-5",
+              "grok-4.3",
+              "o4-mini",
+              "openrouter.openai/gpt-4.1",
+              "copilot.gpt-5.4-nano",
+              "copilot.claude-opus-4.8",
+              "gpt-6-astra",
+              "gpt-5.4-nano",
+              "vertexai.gemini-3.8-flash",
+              "vertexai.gemini-3.1-pro",
+              "copilot.claude-opus-5",
+              "openrouter.anthropic/claude-opus-5.5",
+              "gpt-5-mini",
+              "azure.gpt-5.4-nano",
+              "copilot.claude-sonnet-5",
+              "copilot.gemini-3.5-flash",
+              "claude-haiku-4.5",
+              "gpt-4o",
+              "qwen/qwen3.6-27b",
+              "azure.gpt-5.6-sol",
+              "azure.gpt-5-mini",
+              "copilot.claude-sonnet-5.5",
+              "copilot.gpt-5.6-sol",
+              "azure.o3",
+              "bedrock.claude-haiku-4.5",
+              "gpt-4o-mini",
+              "gpt-5",
+              "openrouter.anthropic/claude-haiku-4.5",
+              "copilot.gpt-5-mini",
+              "azure.gpt-4.1",
+              "azure.gpt-5.6-luna",
+              "gpt-5.5",
+              "gpt-5.6-terra",
+              "gpt-4.1",
+              "azure.gpt-4o",
+              "azure.gpt-4o-mini",
+              "copilot.o4-mini",
+              "gpt-5.4-mini",
+              "gemini-3.5-flash",
+              "azure.gpt-4.1-mini",
+              "gpt-6-luna",
+              "azure.gpt-5.4-mini",
+              "openrouter.x-ai/grok-4.7",
+              "vertexai.gemini-2.5-flash-lite",
+              "claude-sonnet-5.5",
+              "openrouter.openai/gpt-6.1-sol",
+              "openrouter.openai/gpt-6-luna",
+              "vertexai.gemini-2.5-pro",
+              "copilot.gpt-5.4-mini",
+              "claude-fable-5.1",
+              "openrouter.openai/gpt-5.6-sol",
+              "openrouter.google/gemini-3.1-pro-preview",
+              "copilot.gpt-6-luna",
+              "grok-4.6",
+              "copilot.gpt-5.4",
+              "copilot.gpt-5.6-luna",
+              "copilot.gpt-4.1",
+              "azure.o4-mini",
+              "bedrock.claude-sonnet-5.5",
+              "grok-4.5",
+              "azure.gpt-6.1-sol",
+              "gpt-5.4",
+              "gpt-5-nano",
+              "vertexai.gemini-2.5-flash",
+              "copilot.gpt-6.1-sol",
+              "openrouter.deepseek/deepseek-v3.2",
+              "copilot.claude-fable-5",
+              "claude-opus-5",
+              "gemini-2.5-flash",
+              "openrouter.google/gemini-3.8-flash",
+              "copilot.gpt-5.6-terra",
+              "bedrock.claude-fable-5.1",
+              "bedrock.claude-sonnet-4.6",
+              "claude-sonnet-4.6",
+              "copilot.grok-4.5"
+            ],
+            "type": "string"
+          },
+          "reasoningEffort": {
+            "description": "Reasoning effort for models that support it (OpenAI, Anthropic)",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "type": "object"
+      },
+      "description": "Agent configurations",
+      "properties": {
+        "coder": {
+          "$ref": "#/definitions/agent"
+        },
+        "task": {
+          "$ref": "#/definitions/agent"
+        },
+        "title": {
+          "$ref": "#/definitions/agent"
+        }
+      },
+      "type": "object"
+    },
+    "contextPaths": {
+      "default": [
+        ".github/copilot-instructions.md",
+        ".cursorrules",
+        ".cursor/rules/",
+        "CLAUDE.md",
+        "CLAUDE.local.md",
+        "helium.md",
+        "helium.local.md",
+        "HELIUM.md",
+        "HELIUM.local.md",
+        "HELIUM.md",
+        "HELIUM.local.md"
+      ],
+      "description": "Context paths for the application",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "data": {
+      "description": "Storage configuration",
+      "properties": {
+        "directory": {
+          "default": ".helium",
+          "description": "Directory where application data is stored",
+          "type": "string"
+        }
+      },
+      "required": [
+        "directory"
+      ],
+      "type": "object"
+    },
+    "debug": {
+      "default": false,
+      "description": "Enable debug mode",
+      "type": "boolean"
+    },
+    "debugLSP": {
+      "default": false,
+      "description": "Enable LSP debug mode",
+      "type": "boolean"
+    },
+    "lsp": {
+      "additionalProperties": {
+        "description": "LSP configuration for a language",
+        "properties": {
+          "args": {
+            "description": "Command arguments for the LSP server",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "description": "Command to execute for the LSP server",
+            "type": "string"
+          },
+          "disabled": {
+            "default": false,
+            "description": "Whether the LSP is disabled",
+            "type": "boolean"
+          },
+          "options": {
+            "description": "Additional options for the LSP server",
+            "type": "object"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "description": "Language Server Protocol configurations",
+      "type": "object"
+    },
+    "mcpServers": {
+      "additionalProperties": {
+        "description": "MCP server configuration",
+        "properties": {
+          "args": {
+            "description": "Command arguments for the MCP server",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "command": {
+            "description": "Command to execute for the MCP server",
+            "type": "string"
+          },
+          "env": {
+            "description": "Environment variables for the MCP server",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "HTTP headers for SSE type MCP servers",
+            "type": "object"
+          },
+          "type": {
+            "default": "stdio",
+            "description": "Type of MCP server",
+            "enum": [
+              "stdio",
+              "sse"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "description": "URL for SSE type MCP servers",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "description": "Model Control Protocol server configurations",
+      "type": "object"
+    },
+    "providers": {
+      "additionalProperties": {
+        "description": "Provider configuration",
+        "properties": {
+          "apiKey": {
+            "description": "API key for the provider",
+            "type": "string"
+          },
+          "disabled": {
+            "default": false,
+            "description": "Whether the provider is disabled",
+            "type": "boolean"
+          },
+          "provider": {
+            "description": "Provider type",
+            "enum": [
+              "anthropic",
+              "openai",
+              "gemini",
+              "groq",
+              "openrouter",
+              "bedrock",
+              "azure",
+              "vertexai"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "description": "LLM provider configurations",
+      "type": "object"
+    },
+    "tui": {
+      "description": "Terminal User Interface configuration",
+      "properties": {
+        "theme": {
+          "default": "helium",
+          "description": "TUI theme name",
+          "enum": [
+            "helium",
+            "catppuccin",
+            "dracula",
+            "flexoki",
+            "gruvbox",
+            "monokai",
+            "onedark",
+            "tokyonight",
+            "tron"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "wd": {
+      "description": "Working directory for the application",
+      "type": "string"
+    }
+  },
+  "title": "HeliumCode Configuration",
+  "type": "object"
+}

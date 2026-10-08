@@ -1,6 +1,8 @@
 package dialog
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -133,24 +135,46 @@ func (c *commandDialogCmp) View() string {
 		}
 	}
 
-	// Never render wider than the terminal; on small (phone-sized) screens the
-	// long descriptions would otherwise spill past the right edge and leave
-	// the list unscrollable.
-	if c.width > 0 && maxWidth > c.width-4 {
-		maxWidth = c.width - 4
+	// Never render wider than the terminal. Padding (4) and the border (2) are
+	// added on top of the content, so the content itself has to stop at
+	// width-6 — otherwise the long descriptions spill past the right edge on a
+	// phone and the list can no longer be scrolled.
+	if c.width > 0 {
+		capW := c.width - 6
+		if capW < 10 {
+			capW = 10
+		}
+		if maxWidth > capW {
+			maxWidth = capW
+		}
 	}
-	if maxWidth < 24 {
+	if maxWidth < 24 && (c.width <= 0 || 24 <= c.width-6) {
 		maxWidth = 24
 	}
 
-	// Fit as many rows as the available height allows so the dialog can't
-	// grow taller than the screen.
+	// Budget for the list itself: total height is the list plus the border (2),
+	// the padding (2), the title and two spacer lines.
+	budget := 0
 	if c.height > 0 {
-		visible := (c.height - 6) / 2
-		if visible < 3 {
-			visible = 3
+		budget = c.height - 7
+		if budget < 1 {
+			budget = 1
+		}
+
+		// Descriptions wrap, so a row is not a fixed height — shrink the
+		// visible window until the rendered list actually fits.
+		visible := len(commands)
+		if visible > budget {
+			visible = budget
+		}
+		if visible < 1 {
+			visible = 1
 		}
 		c.listView.SetMaxVisibleItems(visible)
+		for visible > 1 && lipgloss.Height(c.listView.View()) > budget {
+			visible--
+			c.listView.SetMaxVisibleItems(visible)
+		}
 	}
 
 	c.listView.SetMaxWidth(maxWidth)
@@ -162,11 +186,20 @@ func (c *commandDialogCmp) View() string {
 		Padding(0, 1).
 		Render("Commands")
 
+	listView := c.listView.View()
+	if budget > 0 {
+		// Last-resort clip so one unusually tall entry can't push the dialog
+		// off the bottom of the screen.
+		if rows := strings.Split(listView, "\n"); len(rows) > budget {
+			listView = strings.Join(rows[:budget], "\n")
+		}
+	}
+
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
 		baseStyle.Width(maxWidth).Render(""),
-		baseStyle.Width(maxWidth).Render(c.listView.View()),
+		baseStyle.Width(maxWidth).Render(listView),
 		baseStyle.Width(maxWidth).Render(""),
 	)
 

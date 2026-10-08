@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/heliumcode-labs/helium/refs/heads/main/install | bash
 #
 # Pin a version:
-#   VERSION=0.1.0 curl -fsSL .../install | bash
+#   VERSION=0.1.2 curl -fsSL .../install | bash
 #
 set -euo pipefail
 
@@ -20,21 +20,21 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
 fi
 
 TRUECOLOR=0
-if [ "${COLORTERM:-}" = "truecolor" ] || [ "${COLORTERM:-}" = "24bit" ]; then
+if [ "$TTY_OUT" = "1" ] && [ -z "${HELIUM_NO_TRUECOLOR:-}" ]; then
+    # Modern terminals overwhelmingly support 24-bit colour; an explicit
+    # HELIUM_NO_TRUECOLOR=1 opts back down to the 256-colour palette.
     TRUECOLOR=1
 fi
 
 if [ "$TTY_OUT" = "1" ]; then
     if [ "$TRUECOLOR" = "1" ]; then
         C_MINT=$'\033[38;2;79;227;193m'
-        C_VIOLET=$'\033[38;2;139;123;247m'
         C_CORAL=$'\033[38;2;255;122;182m'
         C_GREEN=$'\033[38;2;86;211;100m'
         C_RED=$'\033[38;2;255;107;107m'
         C_YELLOW=$'\033[38;2;255;176;32m'
     else
         C_MINT=$'\033[38;5;43m'
-        C_VIOLET=$'\033[38;5;99m'
         C_CORAL=$'\033[38;5;205m'
         C_GREEN=$'\033[38;5;40m'
         C_RED=$'\033[38;5;203m'
@@ -44,7 +44,7 @@ if [ "$TTY_OUT" = "1" ]; then
     C_BOLD=$'\033[1m'
     C_RESET=$'\033[0m'
 else
-    C_MINT=""; C_VIOLET=""; C_CORAL=""; C_GREEN=""; C_RED=""; C_YELLOW=""
+    C_MINT=""; C_CORAL=""; C_GREEN=""; C_RED=""; C_YELLOW=""
     C_DIM=""; C_BOLD=""; C_RESET=""
 fi
 
@@ -115,6 +115,93 @@ die() {
 ok()   { printf '  %s %s\n' "$MARK_OK" "$1"; }
 warn() { printf '  %s %s\n' "${C_YELLOW}${C_BOLD}!${C_RESET}" "$1"; }
 
+# --------------------------------------------------------------------- brand
+ART_WIDTH=47
+ART=(
+'██╗  ██╗███████╗██╗     ██╗██╗   ██╗███╗   ███╗'
+'██║  ██║██╔════╝██║     ██║██║   ██║████╗ ████║'
+'███████║█████╗  ██║     ██║██║   ██║██╔████╔██║'
+'██╔══██║██╔══╝  ██║     ██║██║   ██║██║╚██╔╝██║'
+'██║  ██║███████╗███████╗██║╚██████╔╝██║ ╚═╝ ██║'
+'╚═╝  ╚═╝╚══════╝╚══════╝╚═╝ ╚═════╝ ╚═╝     ╚═╝'
+)
+
+# Per-character gradient + a moving highlight. Falls back to a solid colour
+# when the shell cannot slice the block glyphs by character or truecolor is
+# unavailable. A UTF-8 ctype is what lets bash slice the glyphs by character,
+# so try to switch to one before giving up (the sandbox/Termux default is often
+# the bare POSIX locale, which counts bytes).
+if [ "${#ART[0]}" -ne "$ART_WIDTH" ]; then
+    for loc in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+        if [ "$(LC_ALL="$loc" locale charmap 2>/dev/null)" = "UTF-8" ]; then
+            export LC_ALL="$loc" LC_CTYPE="$loc"
+            [ "${#ART[0]}" -eq "$ART_WIDTH" ] && break
+        fi
+    done
+fi
+
+ART_CHARS=0
+if [ "${#ART[0]}" -eq "$ART_WIDTH" ]; then ART_CHARS=1; fi
+
+glow_color() {
+    local i="$1" cx="$2"
+    if [ "$TRUECOLOR" != "1" ]; then printf '%s' "$C_MINT"; return 0; fi
+    local pos=$(( i * 100 / (ART_WIDTH - 1) ))
+    local r=$(( 79 + (139 - 79) * pos / 100 ))
+    local g=$(( 227 + (123 - 227) * pos / 100 ))
+    local b=$(( 193 + (247 - 193) * pos / 100 ))
+    local d=$(( i - cx )); [ "$d" -lt 0 ] && d=$(( -d ))
+    if [ "$d" -lt 8 ]; then
+        local boost=$(( (8 - d) * 30 / 8 ))
+        r=$(( r + (255 - r) * boost / 30 ))
+        g=$(( g + (255 - g) * boost / 30 ))
+        b=$(( b + (255 - b) * boost / 30 ))
+    fi
+    printf '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
+}
+
+render_art() {
+    local cx="$1" line i out
+    for line in "${ART[@]}"; do
+        if [ "$ART_CHARS" = "1" ]; then
+            out=""
+            for (( i = 0; i < ART_WIDTH; i++ )); do
+                out+="$(glow_color "$i" "$cx")${line:i:1}"
+            done
+            printf '  %s%s\033[0m\033[K\n' "$out" ""
+        else
+            printf '  %s%s%s\033[K\n' "$C_MINT" "$line" "$C_RESET"
+        fi
+    done
+}
+
+banner() {
+    printf '\n'
+    if [ "$TTY_OUT" = "1" ] && [ "$WIDTH" -ge $(( ART_WIDTH + 4 )) ]; then
+        # Animated sweep of light across the wordmark.
+        if [ "$ART_CHARS" = "1" ] && [ "$TRUECOLOR" = "1" ]; then
+            local f cx
+            for (( f = 0; f < 10; f++ )); do
+                cx=$(( -8 + (ART_WIDTH + 16) * f / 9 ))
+                [ "$f" -gt 0 ] && printf '\033[%dA' "${#ART[@]}"
+                render_art "$cx"
+                sleep_tiny 0.035
+            done
+            printf '\033[%dA' "${#ART[@]}"
+            render_art -999
+        else
+            render_art -999
+        fi
+    else
+        printf '  %s%s%s%s%s%s\n' "$C_BOLD" "$C_MINT" "HELIUM" "$C_RESET" "${C_CORAL}${C_BOLD}" "CODE"
+    fi
+}
+
+brand_line() {
+    printf '  %s%s%s%s %s· the noble gas that lifts your terminal%s\n' \
+        "$C_BOLD" "$C_CORAL" "code" "$C_RESET" "$C_DIM" "$C_RESET"
+}
+
 # ------------------------------------------------------------------- spinner
 SPINNER_PID=""
 TMP_DIR=""
@@ -179,9 +266,9 @@ draw_bar() {
     local tail=""
     [ "$pad" -gt 0 ] && tail="$(repeat_char "$pad" ░)"
 
-    printf '\r  %s%s%s [%s%s%s%s%s] %s%3d%%%s  %s\033[K' \
+    printf '\r  %s%s%s [%s%s%s%s] %s%3d%%%s  %s\033[K' \
         "$C_DIM" "$prefix" "$C_RESET" \
-        "$C_DIM" "$bar" "$tail" "$C_RESET" "" \
+        "$C_DIM" "$bar" "$tail" "$C_RESET" \
         "$C_BOLD" "$pct" "$C_RESET" "$(human_size "$cur")"
 }
 
@@ -195,7 +282,7 @@ download() {
     total=${total:-0}
 
     if [ "$TTY_OUT" != "1" ]; then
-        printf '  %s %s\n' "$MARK_STEP" "Downloading ${label}"
+        printf '  %s Downloading %s\n' "$C_MINT" "$label"
         curl -fL --retry 3 --connect-timeout 20 -o "$out" "$url" >/dev/null 2>&1 \
             || return 1
         return 0
@@ -280,7 +367,7 @@ requested_version="${VERSION:-}"
 while [ "$#" -gt 0 ]; do
     case "${1:-}" in
         -v|--version)
-            [ "$#" -ge 2 ] || die "--version needs a value, e.g. --version 0.1.0"
+            [ "$#" -ge 2 ] || die "--version needs a value, e.g. --version 0.1.2"
             requested_version="$2"
             shift 2
             ;;
@@ -310,32 +397,11 @@ case "$filename" in
         die "Unsupported OS/architecture: $os/$arch (linux and mac are supported)" ;;
 esac
 
-# ----------------------------------------------------------------- dimensions
 WIDTH=$(term_width)
-INNER=48
-[ "$INNER" -gt $(( WIDTH - 8 )) ] && INNER=$(( WIDTH - 8 ))
-[ "$INNER" -lt 38 ] && INNER=38
-HSEP=$(repeat_char "$INNER" ─)
 
-# boxline <plain> <styled>: one box row, borders stay aligned.
-boxline() {
-    local plain="$1" styled="$2"
-    local pad=$(( INNER - 2 - ${#plain} ))
-    [ "$pad" -lt 0 ] && pad=0
-    printf '  %s│%s %s%s %s│%s\n' "$C_MINT" "$C_RESET" "$styled" "$(repeat_char "$pad" ' ')" "$C_MINT" "$C_RESET"
-}
-
-# -------------------------------------------------------------------- banner
-printf '\n'
-if [ "$TTY_OUT" = "1" ] && [ "$WIDTH" -ge 56 ]; then
-    printf '  %s╭%s╮%s\n' "$C_MINT" "$HSEP" "$C_RESET"
-    boxline "  He  HeliumCode" "  ${C_BOLD}${C_MINT}He${C_RESET}${C_BOLD}  Helium${C_RESET}${C_CORAL}${C_BOLD}Code${C_RESET}"
-    boxline "      the noble gas that lifts your terminal" "      ${C_DIM}the noble gas that lifts your terminal${C_RESET}"
-    printf '  %s╰%s╯%s\n' "$C_MINT" "$HSEP" "$C_RESET"
-else
-    printf '  %sHe%s  %sHelium%s%sCode%s %s— the noble gas that lifts your terminal%s\n' \
-        "${C_BOLD}${C_MINT}" "$C_RESET" "$C_BOLD" "$C_RESET" "${C_CORAL}${C_BOLD}" "$C_RESET" "$C_DIM" "$C_RESET"
-fi
+# -------------------------------------------------------------------- brand
+banner
+brand_line
 printf '\n'
 
 # --------------------------------------------------------------- resolve tag
@@ -461,21 +527,15 @@ fi
 
 # --------------------------------------------------------------------- done
 printf '\n'
-if [ "$WIDTH" -ge 50 ]; then
-    printf '  %s╭%s╮%s\n' "$C_MINT" "$HSEP" "$C_RESET"
-    boxline "  HeliumCode v${specific_version} is ready" \
-        "  ${C_MINT}${C_BOLD}HeliumCode${C_RESET} ${C_DIM}v${specific_version}${C_RESET} ${C_BOLD}is ready${C_RESET}"
-    boxline "" ""
-    boxline "  helium          start the assistant" \
-        "  ${C_MINT}${C_BOLD}helium${C_RESET}${C_DIM}          start the assistant${C_RESET}"
-    boxline "  helium --help   show what it can do" \
-        "  ${C_MINT}${C_BOLD}helium --help${C_RESET}${C_DIM}   show what it can do${C_RESET}"
-    printf '  %s╰%s╯%s\n' "$C_MINT" "$HSEP" "$C_RESET"
-else
-    printf '  %s%sHeliumCode v%s is ready%s\n' "$C_MINT" "$C_BOLD" "$specific_version" "$C_RESET"
-    printf '    %shelium%s          %sstart the assistant%s\n' "$C_MINT$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-    printf '    %shelium --help%s   %sshow what it can do%s\n' "$C_MINT$C_BOLD" "$C_RESET" "$C_DIM" "$C_RESET"
-fi
+printf '  %s%s%s %s%s%s  %s%s%s\n' \
+    "$C_GREEN" "✔" "$C_RESET" \
+    "$C_BOLD" "HeliumCode" "$C_RESET" \
+    "$C_BOLD" "v${specific_version}${C_RESET} ${C_MINT}is ready${C_RESET}" ""
+printf '\n'
+printf '  %s→%s %s%s%s   start the assistant\n' "$C_MINT" "$C_RESET" \
+    "$C_BOLD" "helium" "$C_RESET"
+printf '  %s→%s %s%s%s  %ssee what it can do%s\n' "$C_MINT" "$C_RESET" \
+    "$C_BOLD" "helium --help" "$C_RESET" "$C_DIM" "$C_RESET"
 
 printf '\n'
 if [ "$PATH_MANUAL" = "1" ]; then

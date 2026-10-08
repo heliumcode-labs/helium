@@ -23,12 +23,12 @@ func init() {
 	var err error
 	rgPath, err = exec.LookPath("rg")
 	if err != nil {
-		logging.Warn("Ripgrep (rg) not found in $PATH. Some features might be limited or slower.")
+		logging.Debug("ripgrep (rg) not found in $PATH; falling back to an internal file walker")
 		rgPath = ""
 	}
 	fzfPath, err = exec.LookPath("fzf")
 	if err != nil {
-		logging.Warn("FZF not found in $PATH. Some features might be limited or slower.")
+		logging.Debug("fzf not found in $PATH; fuzzy file filtering is disabled")
 		fzfPath = ""
 	}
 }

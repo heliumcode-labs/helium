@@ -17,6 +17,7 @@ type SimpleList[T SimpleListItem] interface {
 	tea.Model
 	layout.Bindings
 	SetMaxWidth(maxWidth int)
+	SetMaxVisibleItems(items int)
 	GetSelectedItem() (item T, idx int)
 	SetItems(items []T)
 	GetItems() []T
@@ -107,6 +108,15 @@ func (c *simpleListCmp[T]) GetItems() []T {
 
 func (c *simpleListCmp[T]) SetMaxWidth(width int) {
 	c.maxWidth = width
+}
+
+// SetMaxVisibleItems caps how many rows the list will show at once, so
+// dialogs can shrink to the available terminal height.
+func (c *simpleListCmp[T]) SetMaxVisibleItems(items int) {
+	if items < 1 {
+		items = 1
+	}
+	c.maxVisibleItems = items
 }
 
 func (c *simpleListCmp[T]) View() string {

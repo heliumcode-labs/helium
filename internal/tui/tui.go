@@ -391,6 +391,9 @@ func (a appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case chat.SlashCommandMsg:
+		return a.runSlashCommand(msg.Input)
+
 	case chat.SessionSelectedMsg:
 		a.selectedSession = msg
 		a.sessionDialog.SetSelectedSession(msg.ID)
@@ -675,6 +678,83 @@ func (a *appModel) findCommand(id string) (dialog.Command, bool) {
 		}
 	}
 	return dialog.Command{}, false
+}
+
+// runSlashCommand executes a built-in "/" command typed into the editor. It
+// mirrors the ctrl-based shortcuts so every action stays reachable from a
+// touch keyboard, and falls back to any registered custom command whose id
+// matches.
+func (a appModel) runSlashCommand(input string) (tea.Model, tea.Cmd) {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return a, nil
+	}
+
+	name := strings.TrimPrefix(strings.ToLower(fields[0]), "/")
+	args := strings.TrimSpace(strings.TrimPrefix(input, fields[0]))
+
+	switch name {
+	case "help", "?":
+		a.showHelp = true
+		return a, nil
+
+	case "commands", "command":
+		if len(a.commands) == 0 {
+			return a, util.ReportWarn("No commands available")
+		}
+		a.commandDialog.SetCommands(a.commands)
+		a.showCommandDialog = true
+		return a, nil
+
+	case "models", "model":
+		a.showModelDialog = true
+		return a, nil
+
+	case "theme", "themes":
+		a.showThemeDialog = true
+		return a, a.themeDialog.Init()
+
+	case "sessions", "session":
+		sessions, err := a.app.Sessions.List(context.Background())
+		if err != nil {
+			return a, util.ReportError(err)
+		}
+		if len(sessions) == 0 {
+			return a, util.ReportWarn("No sessions available")
+		}
+		a.sessionDialog.SetSessions(sessions)
+		a.showSessionDialog = true
+		return a, nil
+
+	case "init":
+		a.showInitDialog = true
+		return a, nil
+
+	case "logs", "log":
+		return a, a.moveToPage(page.LogsPage)
+
+	case "compact":
+		return a, func() tea.Msg { return startCompactSessionMsg{} }
+
+	case "quit", "exit", "q":
+		a.showQuit = true
+		return a, nil
+	}
+
+	// Registered (including custom) commands win over the "unknown" notice.
+	for _, cmd := range a.commands {
+		if strings.EqualFold(cmd.ID, name) {
+			if cmd.Handler != nil {
+				return a, cmd.Handler(cmd)
+			}
+			return a, util.CmdHandler(dialog.CommandSelectedMsg{Command: cmd})
+		}
+	}
+
+	if args != "" {
+		return a, util.ReportWarn(fmt.Sprintf("Unknown command: %s", name))
+	}
+	return a, util.ReportWarn(fmt.Sprintf("Unknown command: /%s — type /help for the list", name))
 }
 
 func (a *appModel) moveToPage(pageID page.PageID) tea.Cmd {

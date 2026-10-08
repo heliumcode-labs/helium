@@ -11,97 +11,54 @@ import (
 	"github.com/heliumcode-labs/helium/internal/version"
 )
 
-// Brand mark of HeliumCode: a periodic-table style tile carrying helium's
-// atomic number, symbol and atomic weight.
-const (
-	elementNumber = "2"
-	elementWeight = "4.0026"
-	elementName   = "helium"
-	elementTileW  = 14
-)
-
+// Brand mark of HeliumCode: a compact wordmark. The periodic-table tile that
+// used to sit here was a bordered box that overflowed narrow terminals, so it
+// is gone.
 const tagline = "agentic coding, right in your terminal"
 
-// elementTile renders the bordered brand tile.
-func elementTile() string {
-	t := theme.CurrentTheme()
-	base := styles.Regular()
-
-	// The header line has to be exactly as wide as the symbol block below it
-	// so the tile edges stay flush.
-	header := base.
-		Width(elementTileW).
-		Foreground(t.TextMuted()).
-		Render(fmt.Sprintf("%s      %s", elementNumber, elementWeight))
-
-	symbol := base.
-		Width(elementTileW).
-		Align(lipgloss.Center).
-		Bold(true).
-		Foreground(t.Primary()).
-		Render(styles.HeliumIcon)
-
-	name := base.
-		Width(elementTileW).
-		Align(lipgloss.Center).
-		Foreground(t.TextMuted()).
-		Render(elementName)
-
-	inner := lipgloss.JoinVertical(
-		lipgloss.Left,
-		header,
-		base.Render(""),
-		symbol,
-		name,
-	)
-
-	return base.
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(t.Primary()).
-		Padding(0, 1).
-		Render(inner)
-}
-
-// bannerHeader is the welcome variant of the header: the brand tile next to
-// the product name, version, repository and working directory. It is only
-// used on the initial (empty session) screen.
+// bannerHeader is the welcome variant of the header. It renders a compact
+// wordmark plus the essentials and deliberately avoids the boxed element tile,
+// which overflowed on narrow (phone) terminals.
 func bannerHeader(width int) string {
 	t := theme.CurrentTheme()
 	base := styles.Regular()
 
-	tile := elementTile()
+	if width < 12 {
+		width = 12
+	}
 
-	versionText := base.
-		Foreground(t.TextMuted()).
-		Render(version.Version)
+	muted := func(s string) string {
+		return base.Foreground(t.TextMuted()).Render(ansi.Truncate(s, width, "…"))
+	}
 
 	name := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		base.Foreground(t.Text()).Bold(true).Render("Helium"),
+		base.Foreground(t.Primary()).Bold(true).Render("Helium"),
 		base.Foreground(t.Accent()).Bold(true).Render("Code"),
-		" ",
-		versionText,
 	)
 
-	// The tile and its gap take up space on the left, the info column gets
-	// whatever is left.
-	rightWidth := max(10, width-lipgloss.Width(tile)-2)
-	truncate := func(s string) string { return ansi.Truncate(s, rightWidth, "…") }
+	// Drop the version rather than let the wordmark wrap on very narrow screens.
+	if lipgloss.Width(name)+1+len(version.Version) <= width {
+		name = lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			name,
+			" ",
+			base.Foreground(t.TextMuted()).Render(version.Version),
+		)
+	}
 
-	info := lipgloss.JoinVertical(
-		lipgloss.Left,
-		truncate(name),
-		base.Foreground(t.TextMuted()).Render(truncate(tagline)),
-		base.Foreground(t.TextMuted()).Render(truncate("https://github.com/heliumcode-labs/helium")),
-		base.Foreground(t.TextMuted()).Render(truncate(fmt.Sprintf("cwd: %s", config.WorkingDirectory()))),
-	)
+	repo := "https://github.com/heliumcode-labs/helium"
 
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		tile,
-		" ",
-		info,
-	)
+	lines := []string{name, muted(tagline)}
+
+	// The repo link is the first thing to go when space is tight.
+	if lipgloss.Width(repo) <= width {
+		lines = append(lines, muted(repo))
+	}
+
+	lines = append(lines, muted(fmt.Sprintf("cwd: %s", config.WorkingDirectory())))
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 // providerConfigured reports whether at least one provider has a usable API key.
@@ -144,9 +101,14 @@ func welcomeHints(width int) string {
 
 	shortcuts := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		key("/help"), hint(" commands    "),
-		key("ctrl+?"), hint(" shortcuts    "),
+		key("/help"), hint(" shortcuts    "),
 		key("tab"), hint(" autocomplete"),
+	)
+
+	// One muted line naming the slash commands, so they're discoverable
+	// without needing a ctrl-based shortcut.
+	commands := base.Foreground(t.TextMuted()).Render(
+		ansi.Truncate("/help /commands /models /theme /sessions /quit", width, "…"),
 	)
 
 	lines := []string{intro}
@@ -157,7 +119,7 @@ func welcomeHints(width int) string {
 			),
 		)
 	}
-	lines = append(lines, "", shortcuts)
+	lines = append(lines, "", commands, "", shortcuts)
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

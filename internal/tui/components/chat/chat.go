@@ -25,6 +25,14 @@ type SessionClearedMsg struct{}
 
 type EditorFocusMsg bool
 
+// SlashCommandMsg is emitted when the user submits a line that begins with
+// "/". The shell runs a built-in command instead of sending the text to the
+// model, which makes the commands discoverable on touch keyboards where the
+// ctrl-based shortcuts are hard to reach.
+type SlashCommandMsg struct {
+	Input string
+}
+
 func header(width int) string {
 	return lipgloss.JoinVertical(
 		lipgloss.Top,
@@ -55,6 +63,12 @@ func lspsConfigured(width int) string {
 		lspNames = append(lspNames, name)
 	}
 	sort.Strings(lspNames)
+
+	// Nothing configured yet: don't leave a dangling heading on the welcome
+	// screen.
+	if len(lspNames) == 0 {
+		return ""
+	}
 
 	var lspViews []string
 	for _, name := range lspNames {

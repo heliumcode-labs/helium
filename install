@@ -13,6 +13,16 @@ APP="helium"
 REPO="heliumcode-labs/helium"
 INSTALL_DIR="${HOME}/.helium/bin"
 
+# pretty_dir folds $HOME to "~" so the installer's output stays inside a
+# phone-sized (48-60 column) terminal instead of wrapping.
+pretty_dir() {
+    local d="${1:-$INSTALL_DIR}"
+    if [ -n "${HOME:-}" ] && [ "${d#"$HOME"}" != "$d" ]; then
+        d="~${d#"$HOME"}"
+    fi
+    printf '%s' "$d"
+}
+
 # ---------------------------------------------------------------- appearance
 TTY_OUT=0
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
@@ -61,49 +71,80 @@ term_width() {
         w=$(tput cols 2>/dev/null || true)
     fi
     case "$w" in ''|*[!0-9]*) w=80 ;; esac
-    [ "$w" -lt 44 ] && w=44
+    # Never report a width wider than the real one: on a 40-column phone a
+    # higher floor made every line wrap (and wrapped lines can't be redrawn).
+    [ "$w" -lt 36 ] && w=36
     printf '%s' "$w"
 }
 
 # grad_color <percent>: mint -> violet, flat colour when truecolor is absent.
+# Sets $GRAD_ESC rather than printing — draw_bar appends up to ~30 of these per
+# frame, and a command substitution per cell would mean 30 forks each repaint.
+GRAD_ESC=""
 grad_color() {
-    local p="${1:-0}"
+    local p="${1:-0}" r g b
     [ "$p" -lt 0 ] && p=0
     [ "$p" -gt 100 ] && p=100
     if [ "$TRUECOLOR" = "1" ]; then
-        local r=$(( 79 + (139 - 79) * p / 100 ))
-        local g=$(( 227 + (123 - 227) * p / 100 ))
-        local b=$(( 193 + (247 - 193) * p / 100 ))
-        printf '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
+        r=$(( 79 + (139 - 79) * p / 100 ))
+        g=$(( 227 + (123 - 227) * p / 100 ))
+        b=$(( 193 + (247 - 193) * p / 100 ))
+        printf -v GRAD_ESC '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
     else
-        printf '%s' "$C_MINT"
+        GRAD_ESC="$C_MINT"
     fi
 }
 
+# repeat_char <n> <char> sets $REP (fork-free).
+REP=""
 repeat_char() {
     local n="$1" ch="$2" out="" i
     for (( i = 0; i < n; i++ )); do out+="$ch"; done
-    printf '%s' "$out"
+    REP="$out"
+}
+
+# human_size_v <bytes> sets $HS; human_size prints it for one-off uses.
+HS=""
+human_size_v() {
+    local b=${1:-0}
+    b=${b//[^0-9]/}
+    [ -z "$b" ] && b=0
+    if [ "$b" -ge 1073741824 ]; then
+        printf -v HS '%d.%d GiB' $(( b / 1073741824 )) $(( (b % 1073741824) * 10 / 1073741824 ))
+    elif [ "$b" -ge 1048576 ]; then
+        printf -v HS '%d.%d MiB' $(( b / 1048576 )) $(( (b % 1048576) * 10 / 1048576 ))
+    elif [ "$b" -ge 1024 ]; then
+        printf -v HS '%d KiB' $(( b / 1024 ))
+    else
+        printf -v HS '%d B' "$b"
+    fi
 }
 
 human_size() {
-    awk -v b="${1:-0}" 'BEGIN {
-        if (b >= 1073741824)   printf "%.1f GiB", b / 1073741824
-        else if (b >= 1048576) printf "%.1f MiB", b / 1048576
-        else if (b >= 1024)    printf "%.0f KiB", b / 1024
-        else                   printf "%d B", b
-    }'
+    human_size_v "${1:-0}"
+    printf '%s' "$HS"
 }
 
 human_time() {
-    awk -v s="${1:-0}" 'BEGIN {
-        s = int(s + 0.5)
-        if (s < 60) printf "%ds", s
-        else printf "%dm %02ds", int(s / 60), s % 60
-    }'
+    local s=${1:-0}
+    s=${s%%.*}
+    s=${s//[^0-9]/}
+    [ -z "$s" ] && s=0
+    if [ "$s" -lt 60 ]; then
+        printf '%ds' "$s"
+    else
+        printf '%dm %02ds' $(( s / 60 )) $(( s % 60 ))
+    fi
 }
 
+# now returns fractional seconds (end-of-download stats only); now_s is the
+# fork-free integer clock used by the progress loop.
 now() { date +%s.%N 2>/dev/null || date +%s; }
+
+now_s() {
+    local t=${EPOCHREALTIME:-}
+    if [ -n "$t" ]; then printf '%s' "${t%%.*}"; else date +%s; fi
+}
 
 # ------------------------------------------------------------------ messages
 die() {
@@ -112,8 +153,41 @@ die() {
     exit 1
 }
 
-ok()   { printf '  %s %s\n' "$MARK_OK" "$1"; }
-warn() { printf '  %s %s\n' "${C_YELLOW}${C_BOLD}!${C_RESET}" "$1"; }
+# fit <text> [cols]: truncate to <cols> display columns, honouring SGR escape
+# sequences, so a status line can never wrap (a wrapped line cannot be repainted
+# and is miserable to read on a narrow phone screen).
+fit() {
+    local s="$1" cols="${2:-}" out="" n=0 i=0 c seq
+    if [ -z "$cols" ]; then cols=$(( ${WIDTH:-80} - 4 )); fi
+    [ "$cols" -lt 8 ] && cols=8
+
+    while [ "$i" -lt "${#s}" ]; do
+        c="${s:i:1}"
+        if [ "$c" = $'\033' ]; then
+            seq="$c"; i=$((i + 1))
+            while [ "$i" -lt "${#s}" ]; do
+                c="${s:i:1}"; seq+="$c"; i=$((i + 1))
+                case "$c" in [a-zA-Z]) break ;; esac
+            done
+            out+="$seq"
+            continue
+        fi
+        if [ "$n" -ge "$((cols - 1))" ]; then
+            # Only emit a reset on a terminal; never leak escapes into pipes.
+            if [ "$TTY_OUT" = "1" ]; then
+                printf '%s\033[0m…' "$out"
+            else
+                printf '%s…' "$out"
+            fi
+            return 0
+        fi
+        out+="$c"; n=$((n + 1)); i=$((i + 1))
+    done
+    printf '%s' "$s"
+}
+
+ok()   { printf '  %s %s\n' "$MARK_OK" "$(fit "$1")"; }
+warn() { printf '  %s %s\n' "${C_YELLOW}${C_BOLD}!${C_RESET}" "$(fit "$1")"; }
 
 # --------------------------------------------------------------------- brand
 ART_WIDTH=47
@@ -143,21 +217,25 @@ fi
 ART_CHARS=0
 if [ "${#ART[0]}" -eq "$ART_WIDTH" ]; then ART_CHARS=1; fi
 
+# glow_color <index> <sweep-x> sets $GLOW_ESC instead of printing, so the
+# wordmark can paint ~300 cells per frame without spawning a subshell for each
+# one (that alone made the splash several seconds slow).
+GLOW_ESC=""
 glow_color() {
-    local i="$1" cx="$2"
-    if [ "$TRUECOLOR" != "1" ]; then printf '%s' "$C_MINT"; return 0; fi
-    local pos=$(( i * 100 / (ART_WIDTH - 1) ))
-    local r=$(( 79 + (139 - 79) * pos / 100 ))
-    local g=$(( 227 + (123 - 227) * pos / 100 ))
-    local b=$(( 193 + (247 - 193) * pos / 100 ))
-    local d=$(( i - cx )); [ "$d" -lt 0 ] && d=$(( -d ))
+    local i="$1" cx="$2" pos r g b d boost
+    if [ "$TRUECOLOR" != "1" ]; then GLOW_ESC="$C_MINT"; return 0; fi
+    pos=$(( i * 100 / (ART_WIDTH - 1) ))
+    r=$(( 79 + (139 - 79) * pos / 100 ))
+    g=$(( 227 + (123 - 227) * pos / 100 ))
+    b=$(( 193 + (247 - 193) * pos / 100 ))
+    d=$(( i - cx )); [ "$d" -lt 0 ] && d=$(( -d ))
     if [ "$d" -lt 8 ]; then
-        local boost=$(( (8 - d) * 30 / 8 ))
+        boost=$(( (8 - d) * 30 / 8 ))
         r=$(( r + (255 - r) * boost / 30 ))
         g=$(( g + (255 - g) * boost / 30 ))
         b=$(( b + (255 - b) * boost / 30 ))
     fi
-    printf '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
+    printf -v GLOW_ESC '\033[38;2;%d;%d;%dm' "$r" "$g" "$b"
 }
 
 render_art() {
@@ -166,9 +244,10 @@ render_art() {
         if [ "$ART_CHARS" = "1" ]; then
             out=""
             for (( i = 0; i < ART_WIDTH; i++ )); do
-                out+="$(glow_color "$i" "$cx")${line:i:1}"
+                glow_color "$i" "$cx"
+                out+="$GLOW_ESC${line:i:1}"
             done
-            printf '  %s%s\033[0m\033[K\n' "$out" ""
+            printf '  %s\033[0m\033[K\n' "$out"
         else
             printf '  %s%s%s\033[K\n' "$C_MINT" "$line" "$C_RESET"
         fi
@@ -198,8 +277,16 @@ banner() {
 }
 
 brand_line() {
-    printf '  %s%s%s%s %s· the noble gas that lifts your terminal%s\n' \
-        "$C_BOLD" "$C_CORAL" "code" "$C_RESET" "$C_DIM" "$C_RESET"
+    # Plain text, so it can be measured directly: truncate the tagline instead
+    # of letting it wrap on a narrow screen.
+    local tag="· the noble gas that lifts your terminal"
+    local max=$(( ${WIDTH:-80} - 7 ))
+    [ "$max" -lt 4 ] && max=4
+    if [ "${#tag}" -gt "$max" ]; then
+        tag="${tag:0:$((max - 1))}…"
+    fi
+    printf '  %s%s%s%s %s%s%s\n' \
+        "$C_BOLD" "$C_CORAL" "code" "$C_RESET" "$C_DIM" "$tag" "$C_RESET"
 }
 
 # ------------------------------------------------------------------- spinner
@@ -208,6 +295,7 @@ TMP_DIR=""
 
 cleanup() {
     stop_spinner >/dev/null 2>&1 || true
+    [ -n "${checksum_pid:-}" ] && kill "$checksum_pid" 2>/dev/null || true
     [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -238,48 +326,82 @@ stop_spinner() {
 }
 
 # ------------------------------------------------------------------ download
-# draw_bar <prefix> <cur> <total> <bar_width>: single line, no trailing newline.
+# draw_bar <prefix> <cur> <total> <term_width> <stats>: single line, no newline.
+# Size and speed/ETA are printed only when they fit: a wrapped line cannot be
+# repainted with \r, which garbles the animation on a phone-sized screen.
 draw_bar() {
-    local prefix="$1" cur="$2" total="$3" width="$4"
+    local prefix="$1" cur="$2" total="$3" avail="${4:-80}" stats="${5:-}"
     local pct=0
     if [ "$total" -gt 0 ]; then
         pct=$(( cur * 100 / total ))
         [ "$pct" -gt 100 ] && pct=100
     fi
 
-    local eighths=$(( pct * width * 8 / 100 ))
+    # Keep the label short enough that "  label [bar] 100%" plus a minimum bar
+    # still fits the terminal (indent 2 + brackets 4 + percent 4 + bar 8).
+    local max_prefix=$(( avail - 18 ))
+    [ "$max_prefix" -lt 8 ] && max_prefix=8
+    if [ "${#prefix}" -gt "$max_prefix" ]; then
+        # Prefer dropping the verb over slicing the version number in half.
+        local short="${prefix#Downloading }"
+        if [ "$short" != "$prefix" ] && [ "${#short}" -le "$max_prefix" ]; then
+            prefix="$short"
+        else
+            prefix="${prefix:0:$max_prefix}"
+        fi
+    fi
+
+    human_size_v "$cur"
+    local size="$HS"
+
+    local fixed=$(( 2 + ${#prefix} + 4 + 4 ))
+    local bw want_size=0 want_stats=0
+
+    if [ -n "$stats" ] && [ $(( avail - fixed - ${#stats} - 2 - ${#size} - 2 )) -ge 10 ]; then
+        want_stats=1 want_size=1
+    elif [ $(( avail - fixed - ${#size} - 2 )) -ge 10 ]; then
+        want_size=1
+    fi
+    bw=$(( avail - fixed - want_size * (${#size} + 2) - want_stats * (${#stats} + 2) ))
+    [ "$bw" -lt 8 ] && bw=8
+    [ "$bw" -gt 30 ] && bw=30
+
+    local eighths=$(( pct * bw * 8 / 100 ))
     local full=$(( eighths / 8 ))
     local rem=$(( eighths % 8 ))
     local -a partial=(▏ ▎ ▍ ▌ ▋ ▊ ▉)
-    local d=$(( width > 1 ? width - 1 : 1 ))
+    local d=$(( bw > 1 ? bw - 1 : 1 ))
 
     local bar="" i
     for (( i = 0; i < full; i++ )); do
-        bar+="$(grad_color $(( i * 100 / d )))█"
+        grad_color $(( i * 100 / d ))
+        bar+="$GRAD_ESC█"
     done
     if [ "$rem" -gt 0 ]; then
-        bar+="$(grad_color $(( full * 100 / d )))${partial[$(( rem - 1 ))]}"
+        grad_color $(( full * 100 / d ))
+        bar+="$GRAD_ESC${partial[$(( rem - 1 ))]}"
     fi
 
     local used=$(( full + (rem > 0 ? 1 : 0) ))
-    local pad=$(( width - used ))
+    local pad=$(( bw - used ))
     local tail=""
-    [ "$pad" -gt 0 ] && tail="$(repeat_char "$pad" ░)"
+    if [ "$pad" -gt 0 ]; then
+        repeat_char "$pad" ░
+        tail="$REP"
+    fi
 
-    printf '\r  %s%s%s [%s%s%s%s] %s%3d%%%s  %s\033[K' \
+    printf '\r  %s%s%s [%s%s%s%s] %s%3d%%%s' \
         "$C_DIM" "$prefix" "$C_RESET" \
         "$C_DIM" "$bar" "$tail" "$C_RESET" \
-        "$C_BOLD" "$pct" "$C_RESET" "$(human_size "$cur")"
+        "$C_BOLD" "$pct" "$C_RESET"
+    [ "$want_size" = 1 ] && printf '  %s' "$size"
+    [ "$want_stats" = 1 ] && printf '  %s%s%s' "$C_DIM" "$stats" "$C_RESET"
+    printf '\033[K'
 }
 
 # download <url> <out> <label>
 download() {
     local url="$1" out="$2" label="$3"
-    local total=0
-
-    total=$(curl -sIL --max-time 20 "$url" 2>/dev/null | tr -d '\r' \
-        | awk 'tolower($1) == "content-length:" { len = $2 } END { print len + 0 }') || total=0
-    total=${total:-0}
 
     if [ "$TTY_OUT" != "1" ]; then
         printf '  %s Downloading %s\n' "$C_MINT" "$label"
@@ -288,62 +410,96 @@ download() {
         return 0
     fi
 
-    local width=$(( WIDTH - ${#label} - 34 ))
-    [ "$width" -gt 28 ] && width=28
-    [ "$width" -lt 12 ] && width=12
-
-    local start cur=0 elapsed rc=0 stats
+    local start start_int cur=0 total=0 elapsed rc=0 stats speed sp secs
     local prefix="Downloading ${label}"
+    local size_file="$out.size"
     start=$(now)
+    start_int=${start%%.*}
+
+    # Launch the size probe together with the payload so its HEAD round trip
+    # never sits in front of the first byte (a whole extra RTT on mobile).
+    {
+        curl -sIL --max-time 20 "$url" 2>/dev/null \
+            | tr -d '\r' \
+            | awk 'tolower($1) == "content-length:" { len = $2 } END { print len + 0 }' \
+            > "$size_file"
+    } &
+    local size_pid=$!
 
     curl -fL --retry 3 --connect-timeout 20 -o "$out" "$url" 2>/dev/null &
     local curl_pid=$!
 
     while kill -0 "$curl_pid" 2>/dev/null; do
         if [ -f "$out" ]; then
-            cur=$(wc -c < "$out" 2>/dev/null | tr -d ' ' || echo 0)
-            cur=${cur:-0}
-            elapsed=$(awk -v a="$start" -v b="$(now)" 'BEGIN { print b - a }')
-            draw_bar "$prefix" "$cur" "$total" "$width"
-            stats=$(awk -v c="$cur" -v t="$total" -v e="$elapsed" 'BEGIN {
-                if (e < 0.3 || c <= 0) { exit }
-                s = c / e
-                if (s >= 1048576) sp = sprintf("%.1f MiB/s", s / 1048576)
-                else if (s >= 1024) sp = sprintf("%.0f KiB/s", s / 1024)
-                else sp = sprintf("%.0f B/s", s)
-                out = sp
-                if (t > 0 && s > 0) {
-                    secs = int((t - c) / s + 0.5)
-                    if (secs < 60) et = sprintf("%ds", secs)
-                    else et = sprintf("%dm %02ds", int(secs / 60), secs % 60)
-                    out = out "  ·  ETA " et
-                }
-                printf "%s", out
-            }')
-            [ -n "$stats" ] && printf '  %s%s%s' "$C_DIM" "$stats" "$C_RESET"
+            cur=$(wc -c < "$out" 2>/dev/null || echo 0)
+            cur=${cur//[^0-9]/}
+            [ -z "$cur" ] && cur=0
+
+            if [ -s "$size_file" ]; then
+                total=$(cat "$size_file" 2>/dev/null || echo 0)
+                total=${total//[^0-9]/}
+                [ -z "$total" ] && total=0
+                rm -f "$size_file"
+            fi
+
+            # Speed / ETA in plain arithmetic: no awk, no subshells per frame.
+            stats=""
+            elapsed=$(( $(now_s) - start_int ))
+            if [ "$elapsed" -ge 1 ] && [ "$cur" -gt 0 ]; then
+                sp=$(( cur / elapsed ))
+                if [ "$sp" -ge 1048576 ]; then
+                    printf -v stats '%d.%d MiB/s' $(( sp / 1048576 )) $(( (sp % 1048576) * 10 / 1048576 ))
+                elif [ "$sp" -ge 1024 ]; then
+                    printf -v stats '%d KiB/s' $(( sp / 1024 ))
+                else
+                    printf -v stats '%d B/s' "$sp"
+                fi
+                if [ "$total" -gt 0 ] && [ "$sp" -gt 0 ] && [ "$cur" -lt "$total" ]; then
+                    secs=$(( (total - cur) / sp ))
+                    if [ "$secs" -lt 60 ]; then
+                        stats="$stats  ·  ETA ${secs}s"
+                    else
+                        stats="$stats  ·  ETA $(( secs / 60 ))m $(( secs % 60 ))s"
+                    fi
+                fi
+            fi
+
+            draw_bar "$prefix" "$cur" "$total" "$WIDTH" "$stats"
         fi
         sleep_tiny 0.1
     done
 
     wait "$curl_pid" || rc=$?
+    wait "$size_pid" 2>/dev/null || true
+    rm -f "$size_file"
     if [ "$rc" -ne 0 ]; then
         printf '\r\033[K'
         return 1
     fi
 
-    cur=$(wc -c < "$out" 2>/dev/null | tr -d ' ' || echo 0)
-    elapsed=$(awk -v a="$start" -v b="$(now)" 'BEGIN { print b - a }')
-    local speed=""
-    speed=$(awk -v c="$cur" -v e="$elapsed" 'BEGIN {
-        if (e <= 0) { exit }
-        s = c / e
-        if (s >= 1048576) printf "%.1f MiB/s", s / 1048576
-        else if (s >= 1024) printf "%.0f KiB/s", s / 1024
-        else printf "%.0f B/s", s
-    }')
+    cur=$(wc -c < "$out" 2>/dev/null || echo 0)
+    cur=${cur//[^0-9]/}
+    [ -z "$cur" ] && cur=0
+    elapsed=$(awk -v a="$start_int" -v b="$(now)" 'BEGIN { printf "%d", b - a + 0.5 }')
 
-    printf '\r\033[K  %s %s\n' "$MARK_OK" \
-        "Downloaded ${C_BOLD}$(human_size "$cur")${C_RESET} in $(human_time "$elapsed")${speed:+ ${C_DIM}· ${speed}${C_RESET}}"
+    speed=""
+    if [ "${elapsed:-0}" -gt 0 ] && [ "$cur" -gt 0 ]; then
+        sp=$(( cur / elapsed ))
+        if [ "$sp" -ge 1048576 ]; then
+            printf -v speed '%d.%d MiB/s' $(( sp / 1048576 )) $(( (sp % 1048576) * 10 / 1048576 ))
+        elif [ "$sp" -ge 1024 ]; then
+            printf -v speed '%d KiB/s' $(( sp / 1024 ))
+        else
+            printf -v speed '%d B/s' "$sp"
+        fi
+    fi
+
+    human_size_v "$cur"
+    local final="Downloaded $HS in $(human_time "$elapsed")"
+    if [ -n "$speed" ] && [ $(( 4 + ${#final} + 3 + ${#speed} )) -le "${WIDTH:-80}" ]; then
+        final="$final · $speed"
+    fi
+    printf '\r\033[K  %s %s\n' "$MARK_OK" "$final"
     return 0
 }
 
@@ -434,15 +590,18 @@ fi
 TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t helium)
 archive="$TMP_DIR/$filename"
 
-# ---------------------------------------------------------------- checksums
-start_spinner "Fetching checksums…"
-curl -fsSL --max-time 20 -o "$TMP_DIR/checksums.txt" \
+# -------------------------------------------------- checksums (concurrent)
+# Pull the checksums alongside the archive instead of before it, so
+# verification never adds a round trip to the install.
+{ curl -fsSL --max-time 20 -o "$TMP_DIR/checksums.txt" \
     "https://github.com/${REPO}/releases/download/v${specific_version}/checksums.txt" \
-    2>/dev/null || rm -f "$TMP_DIR/checksums.txt"
-stop_spinner
+    2>/dev/null || rm -f "$TMP_DIR/checksums.txt"; } &
+checksum_pid=$!
 
 # ----------------------------------------------------------------- download
 download "$url" "$archive" "${APP} v${specific_version}" || die "Download failed: $url"
+
+wait "$checksum_pid" 2>/dev/null || true
 
 # ----------------------------------------------------------------- checksum
 if [ -f "$TMP_DIR/checksums.txt" ]; then
@@ -475,7 +634,7 @@ chmod +x "$TMP_DIR/$APP"
 start_spinner "Installing…"
 mv "$TMP_DIR/$APP" "$INSTALL_DIR/$APP"
 stop_spinner
-ok "Installed to ${C_DIM}${INSTALL_DIR}/${APP}${C_RESET}"
+ok "Installed to ${C_DIM}$(pretty_dir "$INSTALL_DIR")/${APP}${C_RESET}"
 
 # --------------------------------------------------------------------- PATH
 XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
@@ -497,28 +656,42 @@ for file in $config_files; do
 done
 
 path_line() {
+    # Absolute path: this is what lands in the shell profile, where a leading
+    # "~" is not guaranteed to expand in every shell.
     case $current_shell in
         fish) printf 'fish_add_path %s' "$INSTALL_DIR" ;;
         *)    printf 'export PATH=%s:$PATH' "$INSTALL_DIR" ;;
     esac
 }
 
+# path_line_display is what we show the user to copy: the "~" form, which the
+# shell expands and which fits a narrow terminal.
+path_line_display() {
+    case $current_shell in
+        fish) printf 'fish_add_path %s' "$(pretty_dir "$INSTALL_DIR")" ;;
+        *)    printf 'export PATH=%s:$PATH' "$(pretty_dir "$INSTALL_DIR")" ;;
+    esac
+}
+
 PATH_FILE=""
 PATH_MANUAL=0
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    if [[ -n $config_file && -w $config_file ]] && ! grep -qF "$INSTALL_DIR" "$config_file"; then
-        {
-            printf '\n# helium\n'
-            path_line
-            printf '\n'
-        } >> "$config_file"
-        PATH_FILE="$config_file"
-        ok "Updated ${C_BOLD}PATH${C_RESET} in ${C_DIM}$config_file${C_RESET}"
-    else
-        PATH_MANUAL=1
-    fi
-else
+PATH_LIVE=0
+if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
+    PATH_LIVE=1
     ok "Already on ${C_BOLD}PATH${C_RESET}"
+elif [[ -n $config_file ]] && grep -qF "$INSTALL_DIR" "$config_file" 2>/dev/null; then
+    # Already configured, just not loaded into the current shell yet.
+    PATH_FILE="$config_file"
+elif [[ -n $config_file && -w $config_file ]]; then
+    {
+        printf '\n# helium\n'
+        path_line
+        printf '\n'
+    } >> "$config_file"
+    PATH_FILE="$config_file"
+    ok "Updated ${C_BOLD}PATH${C_RESET} in ${C_DIM}$config_file${C_RESET}"
+else
+    PATH_MANUAL=1
 fi
 
 if [ -n "${GITHUB_ACTIONS:-}" ] && [ "${GITHUB_ACTIONS}" = "true" ]; then
@@ -532,16 +705,20 @@ printf '  %s%s%s %s%s%s  %s%s%s\n' \
     "$C_BOLD" "HeliumCode" "$C_RESET" \
     "$C_BOLD" "v${specific_version}${C_RESET} ${C_MINT}is ready${C_RESET}" ""
 printf '\n'
-printf '  %s→%s %s%s%s   start the assistant\n' "$C_MINT" "$C_RESET" \
-    "$C_BOLD" "helium" "$C_RESET"
-printf '  %s→%s %s%s%s  %ssee what it can do%s\n' "$C_MINT" "$C_RESET" \
-    "$C_BOLD" "helium --help" "$C_RESET" "$C_DIM" "$C_RESET"
-
-printf '\n'
-if [ "$PATH_MANUAL" = "1" ]; then
-    printf '  %sAdd HeliumCode to your PATH:%s\n' "$C_DIM" "$C_RESET"
-    printf '    %s%s%s\n' "$C_MINT" "$(path_line)" "$C_RESET"
-elif [ -n "$PATH_FILE" ]; then
-    printf '  %sRestart your shell (or source %s) to use helium.%s\n' "$C_DIM" "$PATH_FILE" "$C_RESET"
+# Lead with a command that works right now: a PATH entry written to a config
+# file isn't live in this shell until it's reloaded, so spell out the sequence.
+if [ "$PATH_LIVE" = "1" ]; then
+    printf '  %s→%s %s%s%s          %sstart here%s\n' "$C_MINT" "$C_RESET" \
+        "$C_BOLD" "helium" "$C_RESET" "$C_DIM" "$C_RESET"
+    printf '  %s→%s %s%s%s   %swhat it does%s\n' "$C_MINT" "$C_RESET" \
+        "$C_BOLD" "helium --help" "$C_RESET" "$C_DIM" "$C_RESET"
+elif [ "$PATH_MANUAL" = "1" ]; then
+    printf '  %sfirst%s  add helium to PATH:\n' "$C_MINT" "$C_RESET"
+    printf '    %s%s%s\n' "$C_MINT" "$(path_line_display)" "$C_RESET"
+    printf '  %sthen%s   %s%s%s\n' "$C_MINT" "$C_RESET" "$C_BOLD" "helium" "$C_RESET"
+else
+    printf '  %sfirst%s  %s%s%s\n' "$C_MINT" "$C_RESET" "$C_MINT" \
+        "source $(pretty_dir "$PATH_FILE")" "$C_RESET"
+    printf '  %sthen%s   %s%s%s\n' "$C_MINT" "$C_RESET" "$C_BOLD" "helium" "$C_RESET"
 fi
 printf '\n'

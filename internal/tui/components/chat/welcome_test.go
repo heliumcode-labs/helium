@@ -8,15 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestElementTile(t *testing.T) {
-	tile := elementTile()
-
-	assert.Contains(t, tile, "He")
-	assert.Contains(t, tile, "4.0026")
-	assert.Contains(t, tile, "helium")
-	require.Equal(t, 6, lipgloss.Height(tile))
-}
-
 func TestBannerHeader(t *testing.T) {
 	out := bannerHeader(100)
 
@@ -25,18 +16,27 @@ func TestBannerHeader(t *testing.T) {
 	assert.Contains(t, out, "cwd:")
 }
 
+// The repo link is dropped rather than wrapped when the terminal is too narrow
+// for it.
+func TestBannerHeaderDropsRepoOnNarrowTerminal(t *testing.T) {
+	out := bannerHeader(40)
+
+	assert.Contains(t, out, "HeliumCode")
+	assert.NotContains(t, out, "https://github.com/")
+}
+
 func TestWelcomeHints(t *testing.T) {
 	out := welcomeHints(100)
 
 	assert.Contains(t, out, "/help")
-	assert.Contains(t, out, "ctrl+?")
+	assert.Contains(t, out, "/commands")
 	assert.Contains(t, out, "tab")
 }
 
-// The welcome screen must never paint outside the terminal, even on narrow
-// terminals where the tile and the info column do not fit side by side.
+// The welcome screen must never paint outside the terminal, even on a
+// phone-sized one.
 func TestWelcomeScreenFitsWidth(t *testing.T) {
-	for _, width := range []int{40, 60, 80, 120} {
+	for _, width := range []int{36, 40, 60, 80, 120} {
 		joined := lipgloss.JoinVertical(
 			lipgloss.Top,
 			bannerHeader(width),

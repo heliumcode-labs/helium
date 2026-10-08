@@ -133,6 +133,26 @@ func (c *commandDialogCmp) View() string {
 		}
 	}
 
+	// Never render wider than the terminal; on small (phone-sized) screens the
+	// long descriptions would otherwise spill past the right edge and leave
+	// the list unscrollable.
+	if c.width > 0 && maxWidth > c.width-4 {
+		maxWidth = c.width - 4
+	}
+	if maxWidth < 24 {
+		maxWidth = 24
+	}
+
+	// Fit as many rows as the available height allows so the dialog can't
+	// grow taller than the screen.
+	if c.height > 0 {
+		visible := (c.height - 6) / 2
+		if visible < 3 {
+			visible = 3
+		}
+		c.listView.SetMaxVisibleItems(visible)
+	}
+
 	c.listView.SetMaxWidth(maxWidth)
 
 	title := baseStyle.

@@ -120,11 +120,22 @@ func (m *editorCmp) Init() tea.Cmd {
 }
 
 func (m *editorCmp) send() tea.Cmd {
+	raw := m.textarea.Value()
+	value := strings.TrimSpace(raw)
+
+	// A leading "/" runs a built-in command rather than a prompt. This is the
+	// touch-friendly path advertised on the welcome screen, where the
+	// ctrl-based shortcuts are hard to reach.
+	if strings.HasPrefix(value, "/") {
+		m.textarea.Reset()
+		m.attachments = nil
+		return util.CmdHandler(SlashCommandMsg{Input: value})
+	}
+
 	if m.app.CoderAgent.IsSessionBusy(m.session.ID) {
 		return util.ReportWarn("Agent is working, please wait...")
 	}
 
-	value := m.textarea.Value()
 	m.textarea.Reset()
 	attachments := m.attachments
 
@@ -134,7 +145,7 @@ func (m *editorCmp) send() tea.Cmd {
 	}
 	return tea.Batch(
 		util.CmdHandler(SendMsg{
-			Text:        value,
+			Text:        raw,
 			Attachments: attachments,
 		}),
 	)
